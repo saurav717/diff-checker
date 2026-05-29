@@ -956,8 +956,19 @@ mark.dv-mark.change-target { box-shadow: 0 0 0 2px var(--accent); }
 /* code cell */
 .nb-code {
   display: flex;
+  flex-direction: column;
+}
+.nb-codewrap-outer {
+  display: flex;
   gap: 8px;
   align-items: flex-start;
+}
+.nb-celltitle {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
 }
 .nb-prompt {
   flex: 0 0 auto;

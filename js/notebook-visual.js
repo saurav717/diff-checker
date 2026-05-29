@@ -179,12 +179,16 @@
   function cellHtml(side, cell, body, outputsHtml, lone) {
     if (!cell) return `<div class="nb-cell nb-empty"><span>no matching cell</span></div>`;
     const loneCls = lone ? (side === "a" ? " nb-lone-del" : " nb-lone-add") : "";
+    const title = cell.title ? `<div class="nb-celltitle">${esc(cell.title)}</div>` : "";
     if (cell.type === "markdown") {
-      return `<div class="nb-cell nb-md${loneCls}">${body}</div>`;
+      return `<div class="nb-cell nb-md${loneCls}">${title}${body}</div>`;
     }
     return `<div class="nb-cell nb-code${loneCls}">` +
+      title +
+      `<div class="nb-codewrap-outer">` +
       `<div class="nb-prompt">${side === "a" ? "[ ]" : "[ ]"}</div>` +
       `<div class="nb-code-wrap"><pre class="nb-src">${body}</pre>${outputsHtml || ""}</div>` +
+      `</div>` +
     `</div>`;
   }
 

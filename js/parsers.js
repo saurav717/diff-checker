@@ -42,6 +42,8 @@
     // parse it as a notebook; otherwise fall through to plain-text handling.
     if (e === "html" || e === "htm") {
       const raw = await file.text();
+      const dbx = tryParseDatabricksHtml(raw, file.name);
+      if (dbx) return dbx;
       const nb = tryParseNotebookHtml(raw, file.name);
       if (nb) return nb;
       return { name: file.name, text: normalizeNewlines(raw), kind: "text" };
@@ -367,6 +369,95 @@
 
   function textOf(node) {
     return (node.textContent || "").replace(/\u00a0/g, " ");
+  }
+
+  /* ---- Databricks notebook HTML export ----
+     Databricks embeds the whole notebook as a base64 + URL-encoded JSON
+     model in `var __DATABRICKS_NOTEBOOK_MODEL = '...'`. Each "command"
+     is a cell; a leading %md marks markdown, other %-magics (%sql, %sh,
+     %run, …) are code. Outputs live in command.results. */
+  function tryParseDatabricksHtml(html, name) {
+    if (html.indexOf("__DATABRICKS_NOTEBOOK_MODEL") === -1) return null;
+    const m = html.match(/__DATABRICKS_NOTEBOOK_MODEL\s*=\s*'([^']+)'/);
+    if (!m) return null;
+    let model;
+    try { model = JSON.parse(decodeURIComponent(atob(m[1]))); }
+    catch (_) { return null; }
+    const cmds = (model.commands || []).slice().sort((a, b) => (a.position || 0) - (b.position || 0));
+    if (!cmds.length) return null;
+
+    const cells = [];
+    for (const c of cmds) {
+      const raw = c.command || "";
+      const mdm = raw.match(/^%md(?:-sandbox)?[ \t]*\n?/);
+      const title = c.showCommandTitle && c.commandTitle ? c.commandTitle : "";
+      if (mdm) {
+        const src = raw.slice(mdm[0].length);
+        cells.push({ type: "markdown", source: src, html: renderMarkdown(src), outputs: [], title });
+      } else {
+        const outputs = c.hideCommandResult ? [] : extractDbxOutputs(c.results);
+        // keep the source verbatim (incl. any %sql/%sh/%run magic line)
+        cells.push({ type: "code", source: raw, outputs, title });
+      }
+    }
+    if (!cells.length) return null;
+    return { name: name, text: notebookToText(cells), kind: "notebook", nbCells: cells };
+  }
+
+  function extractDbxOutputs(results) {
+    if (!results) return [];
+    const subs = results.type === "listResults" ? (results.data || []) : [results];
+    const out = [];
+    for (const r of subs) {
+      if (!r) continue;
+      const t = r.type;
+      if (t === "ansi" || t === "text") {
+        out.push({ kind: "text", text: stripAnsi(typeof r.data === "string" ? r.data : joinMaybe(r.data)) });
+      } else if (t === "mimeBundle" && r.data) {
+        const d = r.data;
+        if (d["image/png"]) out.push({ kind: "image", src: "data:image/png;base64," + String(d["image/png"]).replace(/\s/g, "") });
+        else if (d["image/jpeg"]) out.push({ kind: "image", src: "data:image/jpeg;base64," + String(d["image/jpeg"]).replace(/\s/g, "") });
+        else if (d["text/html"]) out.push({ kind: "html", html: sanitizeHtml(joinMaybe(d["text/html"])) });
+        else if (d["image/svg+xml"]) out.push({ kind: "html", html: joinMaybe(d["image/svg+xml"]) });
+        else if (d["text/plain"]) out.push({ kind: "text", text: stripAnsi(joinMaybe(d["text/plain"])) });
+      } else if (t === "htmlSandbox" || t === "html") {
+        out.push({ kind: "html", html: sanitizeHtml(String(r.data)) });
+      } else if (t === "image") {
+        out.push({ kind: "image", src: String(r.data) });
+      } else if (t === "table" && r.data) {
+        out.push({ kind: "html", html: dbxTableHtml(r.data, r.schema || (r.arguments && r.arguments.schema)) });
+      } else if (t === "error") {
+        const txt = r.summary || r.cause || r.data || "";
+        out.push({ kind: "text", text: stripAnsi(joinMaybe(txt)), err: true });
+      } else if (typeof r.data === "string") {
+        out.push({ kind: "text", text: stripAnsi(r.data) });
+      }
+    }
+    return out;
+  }
+
+  function dbxTableHtml(data, schema) {
+    const rows = Array.isArray(data) ? data : [];
+    const head = schema && schema.map
+      ? "<tr>" + schema.map(s => "<th>" + escHtml(s.name || s) + "</th>").join("") + "</tr>"
+      : "";
+    const body = rows.slice(0, 100).map(r => {
+      const cells = Array.isArray(r) ? r : Object.values(r);
+      return "<tr>" + cells.map(c => "<td>" + escHtml(c == null ? "" : String(c)) + "</td>").join("") + "</tr>";
+    }).join("");
+    return "<table>" + head + body + "</table>";
+  }
+
+  /* Strip <script>/<style> and inline event handlers from embedded output
+     HTML so rendering a notebook can't execute arbitrary code. */
+  function sanitizeHtml(html) {
+    let s = String(html)
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+      .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+      .replace(/\son\w+\s*=\s*[^\s>]+/gi, "");
+    return s;
   }
 
   /* Plain-text rendering of a notebook for the Text-mode fallback diff. */
