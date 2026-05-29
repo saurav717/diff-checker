@@ -7,6 +7,7 @@
   const R = window.DiffRender;
   const GD = window.GridDiff;
   const GR = window.GridRender;
+  const PV = window.PdfVisual;
 
   // ---- App state ----
   const state = {
@@ -18,6 +19,9 @@
     granularity: "word",// word | char
     tabular: false,     // both files are spreadsheets/csv
     gridMode: true,     // show tabular data as a cell grid
+    pdfVisual: false,   // both files are PDFs (visual diff available)
+    pdfMode: "visual",  // visual | text  (when pdfVisual)
+    pdfData: null,      // rendered pages + highlight boxes
     rows: [],
     gridData: null,
     navTargets: [],
@@ -174,6 +178,9 @@
     state.currentHunk = -1;
     state.tabular = !!(state.a.sheets && state.b.sheets);
     if (state.tabular) state.gridMode = true;
+    state.pdfVisual = !!(state.a.kind === "pdf" && state.b.kind === "pdf" && state.a.pdfPages && state.b.pdfPages);
+    if (state.pdfVisual) state.pdfMode = "visual";
+    state.pdfData = null;
     rebuildDiff();
     uploadEl.classList.add("hidden");
     toolbarEl.classList.remove("hidden");
@@ -182,9 +189,24 @@
   }
 
   function isGrid() { return state.tabular && state.gridMode; }
+  function isVisualPdf() { return state.pdfVisual && state.pdfMode === "visual"; }
+
+  function showLoading(on, label) {
+    if (label) loadingEl.querySelector("span").textContent = label;
+    loadingEl.classList.toggle("show", !!on);
+  }
 
   function rebuildDiff() {
     state.forced = new Set();
+
+    if (isVisualPdf()) {
+      if (!state.pdfData) state.pdfData = PV.build(state.a, state.b);
+      updateToolbarForMode();
+      renderAll();
+      updateStats();
+      return;
+    }
+
     if (isGrid()) {
       state.gridData = GD.buildGridDiff(state.a.sheets, state.b.sheets, { ignoreWs: state.ignoreWs });
     } else {
@@ -196,6 +218,12 @@
   }
 
   function renderAll() {
+    if (isVisualPdf()) {
+      PV.render(diffEl, state);
+      scanNav();
+      updateNav();
+      return;
+    }
     if (isGrid()) {
       GR.render(diffEl, state);
     } else {
@@ -218,12 +246,22 @@
   // Show/hide controls that only make sense in a given mode.
   function updateToolbarForMode() {
     const grid = isGrid();
+    const vpdf = isVisualPdf();
     $("#gridSeg").classList.toggle("hidden", !state.tabular);
-    $("#highlightGroup").classList.toggle("hidden", grid);
+    $("#pdfSeg").classList.toggle("hidden", !state.pdfVisual);
+    // In visual PDF mode, line-oriented text controls don't apply.
+    $("#viewGroup").classList.toggle("hidden", vpdf);
+    $("#optGroup").classList.toggle("hidden", vpdf);
+    $("#highlightGroup").classList.toggle("hidden", grid || vpdf);
+    $("#searchGroup").classList.toggle("hidden", vpdf);
     $("#statMod").classList.toggle("hidden", !grid);
     if (state.tabular) {
       document.querySelectorAll("[data-tab]").forEach(b =>
         b.classList.toggle("active", b.dataset.tab === (state.gridMode ? "grid" : "text")));
+    }
+    if (state.pdfVisual) {
+      document.querySelectorAll("[data-pdftab]").forEach(b =>
+        b.classList.toggle("active", b.dataset.pdftab === state.pdfMode));
     }
   }
 
@@ -245,6 +283,12 @@
   }
 
   function updateStats() {
+    if (isVisualPdf()) {
+      const s = state.pdfData ? state.pdfData.stats : { add: 0, del: 0 };
+      $("#statAdd").textContent = "+" + s.add;
+      $("#statDel").textContent = "−" + s.del;
+      return;
+    }
     if (isGrid()) {
       const s = state.gridData.stats;
       $("#statAdd").textContent = "+" + s.addCells;
@@ -262,6 +306,22 @@
   function scanNav() {
     state.navTargets = [];
     let scope, sel;
+    if (isVisualPdf()) {
+      scope = diffEl.querySelector(".pdf-pages");
+      if (!scope) return;
+      const seen = new Set();
+      scope.querySelectorAll(".pdf-hl").forEach(el => {
+        const row = el.closest(".pdf-row");
+        if (!row) return;
+        // dedupe the mirrored A/B highlight of the same change line
+        const key = row.dataset.page + ":" + Math.round(parseFloat(el.style.top));
+        if (seen.has(key)) return;
+        seen.add(key);
+        state.navTargets.push(el);
+      });
+      if (state.currentHunk >= state.navTargets.length) state.currentHunk = -1;
+      return;
+    }
     if (isGrid()) {
       scope = diffEl.querySelector(".grid-primary");
       sel = ".gtr[data-type], .gfold";
@@ -374,6 +434,7 @@
     state.a = null; state.b = null;
     state.search = ""; state.searchIdx = -1; state.currentHunk = -1;
     state.view = "split"; state.focus = false; state.gridMode = true;
+    state.pdfVisual = false; state.pdfMode = "visual"; state.pdfData = null;
     state.forced = new Set();
     $("#searchInput").value = "";
     $("#searchCount").textContent = "";
@@ -421,6 +482,21 @@
         rebuildDiff();
       });
     });
+    // visual / text segmented (PDFs only)
+    document.querySelectorAll("[data-pdftab]").forEach(b => {
+      b.addEventListener("click", () => {
+        if (state.pdfMode === b.dataset.pdftab) return;
+        state.pdfMode = b.dataset.pdftab;
+        state.currentHunk = -1;
+        if (state.pdfMode === "text") {
+          state.rows = E.buildRows(state.a.text, state.b.text, { ignoreWs: state.ignoreWs });
+        }
+        document.querySelectorAll("[data-pdftab]").forEach(x => x.classList.toggle("active", x === b));
+        updateToolbarForMode();
+        renderAll();
+        updateStats();
+      });
+    });
     // focus toggle
     $("#focusToggle").addEventListener("click", () => {
       state.focus = !state.focus;
@@ -458,6 +534,7 @@
       const tmp = state.a; state.a = state.b; state.b = tmp;
       slot.a = state.a; slot.b = state.b;
       state.currentHunk = -1;
+      state.pdfData = null;
       rebuildDiff();
       toast("Swapped sides");
     });

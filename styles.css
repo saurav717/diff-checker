@@ -550,6 +550,152 @@ mark.s-hit.current { background: #ffb938; box-shadow: 0 0 0 2px #d98a00 inset; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ============================================================
+   Visual PDF diff — rendered pages, highlighted change regions
+   ============================================================ */
+.pdfdiff { padding-bottom: 40px; }
+
+.pdf-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.pdf-h {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 0;
+}
+.pdf-h:first-child { border-right: 1px solid var(--border); }
+.pdf-badge {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700;
+  color: #fff;
+  flex: 0 0 auto;
+}
+.pdf-badge.a { background: var(--del-sign); }
+.pdf-badge.b { background: var(--add-sign); }
+.pdf-hname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-htag {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.pdf-htag.del { background: var(--del-line); color: var(--del-text); }
+.pdf-htag.add { background: var(--add-line); color: var(--add-text); }
+
+.pdf-pages { display: flex; flex-direction: column; }
+.pdf-row {
+  display: grid;
+  grid-template-columns: 1fr 36px 1fr;
+  align-items: start;
+  gap: 0;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.pdf-row.has-change { background: var(--surface-2); }
+.pdf-pnum {
+  align-self: center;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  user-select: none;
+}
+.pdf-cell {
+  display: flex;
+  justify-content: center;
+  padding: 0 22px;
+}
+.pdf-cell:first-child { justify-content: flex-end; }
+.pdf-cell:last-child { justify-content: flex-start; }
+
+.pdf-page {
+  position: relative;
+  width: 100%;
+  max-width: 620px;
+  background: #fff;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pdf-page img { display: block; width: 100%; height: auto; }
+.pdf-page-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1.294;
+  background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 8px, var(--surface-3) 8px, var(--surface-3) 16px);
+  border-style: dashed;
+  box-shadow: none;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* highlight overlay */
+.pdf-ov { position: absolute; inset: 0; pointer-events: none; }
+.pdf-hl {
+  position: absolute;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+  transition: outline-color .15s;
+}
+.pdf-hl.del { background: var(--del-word); outline: 1.5px solid transparent; }
+.pdf-hl.add { background: var(--add-word); outline: 1.5px solid transparent; }
+
+/* active change target */
+.pdf-hl.change-target {
+  outline-width: 2px;
+  z-index: 2;
+}
+.pdf-hl.del.change-target { outline-color: var(--del-sign); }
+.pdf-hl.add.change-target { outline-color: var(--add-sign); }
+
+.pdf-identical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 20px 8px;
+  text-align: center;
+  color: var(--muted);
+}
+.pdf-identical .pdf-id-ic { color: var(--add-sign); }
+.pdf-identical h2 { margin: 6px 0 0; font-size: 17px; color: var(--text); font-weight: 600; }
+.pdf-identical p { margin: 0; font-size: 13px; }
+
+.pdf-error {
+  text-align: center;
+  padding: 60px 24px;
+  color: var(--del-sign);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.pdf-error span { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+@media (max-width: 720px) {
+  .pdf-row { grid-template-columns: 1fr 24px 1fr; padding: 14px 0; }
+  .pdf-cell { padding: 0 8px; }
+}
+
 .hidden { display: none !important; }
 
 /* ============================================================

@@ -116,34 +116,102 @@
     return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc" };
   }
 
-  /* ---------- PDF via pdf.js (reconstruct lines by y-position) ---------- */
+  /* ---------- PDF via pdf.js ----------
+     One document session per file: extract text (reconstructed by
+     y-position) AND render each page to an image with word-level
+     bounding boxes for the visual diff, then destroy the document.
+     Doing everything in a single session — and never keeping two
+     documents open at once — keeps pdf.js's worker happy. */
+  const PDF_RENDER_SCALE = 1.6;
+  const PDF_MAX_VISUAL_PAGES = 60;   // beyond this, skip image rendering
+
   async function parsePdf(file) {
     if (typeof pdfjsLib === "undefined") throw new Error("PDF parser failed to load.");
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
     const out = [];
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const tc = await page.getTextContent();
-      if (p > 1) out.push("");
-      out.push(`──── Page ${p} ────`);
-      const lines = new Map();
-      for (const it of tc.items) {
-        if (!it.str) continue;
-        const y = Math.round(it.transform[5]);
-        if (!lines.has(y)) lines.set(y, []);
-        lines.get(y).push(it);
+    const pages = [];
+    const canRenderVisual = pdf.numPages <= PDF_MAX_VISUAL_PAGES;
+    let visualOk = canRenderVisual;
+
+    try {
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent();
+
+        // --- reconstructed text (for text-mode diff + export) ---
+        if (p > 1) out.push("");
+        out.push(`──── Page ${p} ────`);
+        const lines = new Map();
+        for (const it of tc.items) {
+          if (!it.str) continue;
+          const y = Math.round(it.transform[5]);
+          if (!lines.has(y)) lines.set(y, []);
+          lines.get(y).push(it);
+        }
+        const ys = [...lines.keys()].sort((a, b) => b - a);
+        for (const y of ys) {
+          const row = lines.get(y)
+            .sort((a, b) => a.transform[4] - b.transform[4])
+            .map(i => i.str).join("")
+            .replace(/\s+$/g, "");
+          if (row.trim() !== "") out.push(row);
+        }
+
+        // --- rendered image + word boxes (for visual diff) ---
+        if (visualOk) {
+          try {
+            const vp = page.getViewport({ scale: PDF_RENDER_SCALE });
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.ceil(vp.width);
+            canvas.height = Math.ceil(vp.height);
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({ canvasContext: ctx, viewport: vp }).promise;
+
+            const words = [];
+            for (const item of tc.items) {
+              const str = item.str;
+              if (!str || !str.trim()) continue;
+              const tx = pdfjsLib.Util.transform(vp.transform, item.transform);
+              const fontH = Math.hypot(tx[2], tx[3]);
+              const totalW = item.width * vp.scale;
+              const x0 = tx[4];
+              const yTop = tx[5] - fontH;
+              const charW = totalW / Math.max(1, str.length);
+              const re = /\S+/g;
+              let m;
+              while ((m = re.exec(str))) {
+                words.push({ str: m[0], x: x0 + m.index * charW, y: yTop, w: m[0].length * charW, h: fontH });
+              }
+            }
+
+            pages.push({
+              url: canvas.toDataURL("image/png"),
+              vw: Math.ceil(vp.width),
+              vh: Math.ceil(vp.height),
+              words
+            });
+            canvas.width = canvas.height = 0;
+          } catch (_) {
+            // rendering failed — disable visual mode but keep text
+            visualOk = false;
+            pages.length = 0;
+          }
+        }
       }
-      const ys = [...lines.keys()].sort((a, b) => b - a);
-      for (const y of ys) {
-        const row = lines.get(y)
-          .sort((a, b) => a.transform[4] - b.transform[4])
-          .map(i => i.str).join("")
-          .replace(/\s+$/g, "");
-        if (row.trim() !== "") out.push(row);
-      }
+    } finally {
+      try { await pdf.destroy(); } catch (_) {}
     }
-    return { name: file.name, text: out.join("\n"), kind: "pdf" };
+
+    return {
+      name: file.name,
+      text: out.join("\n"),
+      kind: "pdf",
+      pageCount: pdf.numPages,
+      pdfPages: (visualOk && pages.length) ? pages : null
+    };
   }
 
   window.DiffParse = { parseFile, kindLabel, ext };
