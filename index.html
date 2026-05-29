@@ -14,6 +14,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script>
   if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -59,6 +60,7 @@
           <span class="type-chip">.xlsx</span>
           <span class="type-chip">.docx</span>
           <span class="type-chip">.pdf</span>
+          <span class="type-chip">.ipynb</span>
         </div>
       </div>
 
@@ -195,6 +197,28 @@
       </div>
     </div>
 
+    <div class="tb-group hidden" id="docSeg">
+      <span class="tb-label">Document</span>
+      <div class="segment">
+        <button data-doctab="visual" class="active">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="18" rx="1.5"/></svg>
+          Visual
+        </button>
+        <button data-doctab="text">Text</button>
+      </div>
+    </div>
+
+    <div class="tb-group hidden" id="nbSeg">
+      <span class="tb-label">Notebook</span>
+      <div class="segment">
+        <button data-nbtab="visual" class="active">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="18" rx="1.5"/></svg>
+          Visual
+        </button>
+        <button data-nbtab="text">Text</button>
+      </div>
+    </div>
+
     <div class="tb-group" id="highlightGroup">
       <span class="tb-label">Highlight</span>
       <div class="segment">
@@ -254,6 +278,8 @@
 <script src="js/diff-engine.js"></script>
 <script src="js/grid-diff.js"></script>
 <script src="js/pdf-visual.js"></script>
+<script src="js/docx-visual.js"></script>
+<script src="js/notebook-visual.js"></script>
 <script src="js/render.js"></script>
 <script src="js/render-grid.js"></script>
 <script src="js/app.js"></script>

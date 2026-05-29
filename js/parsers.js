@@ -25,6 +25,7 @@
       sheet: "Spreadsheet",
       doc: "Word document",
       pdf: "PDF",
+      notebook: "Jupyter notebook",
       paste: "Pasted text"
     })[kind] || "Text";
   }
@@ -35,6 +36,16 @@
     if (e === "xlsx" || e === "xls" || e === "xlsm") return parseSheet(file);
     if (e === "docx") return parseDocx(file);
     if (e === "pdf") return parsePdf(file);
+    if (e === "ipynb") return parseNotebookJson(file);
+
+    // HTML may be a Jupyter notebook export (nbconvert). Detect and, if so,
+    // parse it as a notebook; otherwise fall through to plain-text handling.
+    if (e === "html" || e === "htm") {
+      const raw = await file.text();
+      const nb = tryParseNotebookHtml(raw, file.name);
+      if (nb) return nb;
+      return { name: file.name, text: normalizeNewlines(raw), kind: "text" };
+    }
 
     // Everything else: read as text. CSV gets a structured grid too.
     if (TEXT_EXT.has(e) || e === "") {
@@ -113,7 +124,15 @@
     let text = res.value || "";
     // Collapse 3+ blank lines to a single blank line for readable diffs.
     text = text.replace(/\n{3,}/g, "\n\n");
-    return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc" };
+
+    // Also produce formatted HTML for the visual (rendered-page) diff.
+    let docHtml = null;
+    try {
+      const h = await mammoth.convertToHtml({ arrayBuffer: buf });
+      docHtml = (h && h.value && h.value.trim()) ? h.value : null;
+    } catch (_) { docHtml = null; }
+
+    return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc", docHtml };
   }
 
   /* ---------- PDF via pdf.js ----------
@@ -212,6 +231,163 @@
       pageCount: pdf.numPages,
       pdfPages: (visualOk && pages.length) ? pages : null
     };
+  }
+
+  /* ============================================================
+     Jupyter notebooks (.ipynb JSON  &  nbconvert .html exports)
+     Both are normalized to the same cell model so they can be
+     compared against each other:
+       nbCells: [{ type:'code'|'markdown', source, html?, outputs:[...] }]
+       outputs: [{kind:'text', text} | {kind:'image', src} | {kind:'html', html}]
+     ============================================================ */
+  function stripAnsi(s) {
+    return String(s).replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+  }
+  function joinMaybe(v) {
+    return Array.isArray(v) ? v.join("") : (v == null ? "" : String(v));
+  }
+  function renderMarkdown(src) {
+    if (typeof marked !== "undefined") {
+      try { return marked.parse(src, { breaks: true, gfm: true }); } catch (_) {}
+    }
+    // minimal fallback
+    return "<p>" + escHtml(src).replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br>") + "</p>";
+  }
+  function escHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  async function parseNotebookJson(file) {
+    let nb;
+    try { nb = JSON.parse(await file.text()); }
+    catch (_) { throw new Error(`"${file.name}" is not valid notebook JSON.`); }
+    const rawCells = Array.isArray(nb.cells) ? nb.cells
+      : (nb.worksheets && nb.worksheets[0] && nb.worksheets[0].cells) || [];
+    const cells = [];
+    for (const c of rawCells) {
+      const type = c.cell_type === "markdown" ? "markdown"
+                 : c.cell_type === "code" ? "code" : "raw";
+      const source = joinMaybe(c.source || c.input);
+      if (type === "markdown") {
+        cells.push({ type: "markdown", source, html: renderMarkdown(source), outputs: [] });
+      } else if (type === "code") {
+        cells.push({ type: "code", source, outputs: extractIpynbOutputs(c.outputs || []) });
+      } else {
+        // raw cell — show as plain preformatted text
+        cells.push({ type: "code", source, outputs: [], raw: true });
+      }
+    }
+    return { name: file.name, text: notebookToText(cells), kind: "notebook", nbCells: cells };
+  }
+
+  function extractIpynbOutputs(outs) {
+    const result = [];
+    for (const o of outs) {
+      const t = o.output_type;
+      if (t === "stream") {
+        result.push({ kind: "text", text: stripAnsi(joinMaybe(o.text)) });
+      } else if (t === "error") {
+        result.push({ kind: "text", text: stripAnsi(joinMaybe(o.traceback).replace(/\n$/, "")), err: true });
+      } else if (t === "execute_result" || t === "display_data") {
+        const d = o.data || {};
+        if (d["image/png"]) {
+          result.push({ kind: "image", src: "data:image/png;base64," + joinMaybe(d["image/png"]).replace(/\s/g, "") });
+        } else if (d["image/jpeg"]) {
+          result.push({ kind: "image", src: "data:image/jpeg;base64," + joinMaybe(d["image/jpeg"]).replace(/\s/g, "") });
+        } else if (d["image/svg+xml"]) {
+          result.push({ kind: "html", html: joinMaybe(d["image/svg+xml"]) });
+        } else if (d["text/html"]) {
+          result.push({ kind: "html", html: joinMaybe(d["text/html"]) });
+        } else if (d["text/plain"]) {
+          result.push({ kind: "text", text: stripAnsi(joinMaybe(d["text/plain"])) });
+        }
+      }
+    }
+    return result;
+  }
+
+  /* Detect + parse an nbconvert HTML export. Returns null if it doesn't
+     look like a notebook (so the caller treats it as ordinary HTML). */
+  function tryParseNotebookHtml(html, name) {
+    let doc;
+    try { doc = new DOMParser().parseFromString(html, "text/html"); }
+    catch (_) { return null; }
+
+    // Lab/notebook 7 template uses .jp-Cell; classic uses .cell.code_cell etc.
+    let cellEls = doc.querySelectorAll(".jp-Notebook .jp-Cell, .jp-Cell");
+    let template = "lab";
+    if (!cellEls.length) {
+      cellEls = doc.querySelectorAll("#notebook .cell, .cell.code_cell, .cell.text_cell, div.cell");
+      template = "classic";
+    }
+    if (!cellEls.length) return null;
+
+    const cells = [];
+    cellEls.forEach(el => {
+      const isMd = template === "lab"
+        ? el.classList.contains("jp-MarkdownCell")
+        : el.classList.contains("text_cell");
+      const isCode = template === "lab"
+        ? el.classList.contains("jp-CodeCell")
+        : el.classList.contains("code_cell");
+
+      if (isMd) {
+        const md = template === "lab"
+          ? el.querySelector(".jp-RenderedMarkdown")
+          : el.querySelector(".text_cell_render, .rendered_html");
+        const node = md || el;
+        cells.push({ type: "markdown", source: textOf(node), html: node.innerHTML, outputs: [] });
+      } else if (isCode || !isMd) {
+        // code cell (or unknown → treat as code)
+        const inputEl = template === "lab"
+          ? el.querySelector(".jp-InputArea-editor, .jp-CodeMirrorEditor, .highlight, pre")
+          : el.querySelector(".input_area pre, .input_area, .highlight, pre");
+        const source = inputEl ? textOf(inputEl).replace(/\n$/, "") : "";
+        const outEls = template === "lab"
+          ? el.querySelectorAll(".jp-OutputArea-output")
+          : el.querySelectorAll(".output_area .output_subarea, .output_subarea");
+        const outputs = [];
+        outEls.forEach(o => {
+          const img = o.querySelector("img");
+          if (img && img.getAttribute("src")) { outputs.push({ kind: "image", src: img.getAttribute("src") }); return; }
+          const table = o.querySelector("table");
+          if (table) { outputs.push({ kind: "html", html: table.outerHTML }); return; }
+          const pre = o.querySelector("pre");
+          const txt = pre ? textOf(pre) : textOf(o);
+          if (txt.trim()) outputs.push({ kind: "text", text: stripAnsi(txt.replace(/\n$/, "")) });
+        });
+        if (source.trim() === "" && outputs.length === 0) return; // skip empties
+        cells.push({ type: "code", source, outputs });
+      }
+    });
+
+    if (!cells.length) return null;
+    return { name, text: notebookToText(cells), kind: "notebook", nbCells: cells };
+  }
+
+  function textOf(node) {
+    return (node.textContent || "").replace(/\u00a0/g, " ");
+  }
+
+  /* Plain-text rendering of a notebook for the Text-mode fallback diff. */
+  function notebookToText(cells) {
+    const out = [];
+    cells.forEach((c, i) => {
+      if (i > 0) out.push("");
+      if (c.type === "markdown") {
+        out.push("# ── Markdown cell ──");
+        out.push(c.source.trimEnd());
+      } else {
+        out.push("# ── Code cell ──");
+        out.push(c.source.trimEnd());
+        c.outputs.forEach(o => {
+          if (o.kind === "text") out.push(o.text.split("\n").map(l => "  | " + l).join("\n"));
+          else if (o.kind === "image") out.push("  [image output]");
+          else if (o.kind === "html") out.push("  [rich output]");
+        });
+      }
+    });
+    return out.join("\n");
   }
 
   window.DiffParse = { parseFile, kindLabel, ext };

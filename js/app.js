@@ -8,6 +8,8 @@
   const GD = window.GridDiff;
   const GR = window.GridRender;
   const PV = window.PdfVisual;
+  const DV = window.DocxVisual;
+  const NV = window.NotebookVisual;
 
   // ---- App state ----
   const state = {
@@ -22,6 +24,12 @@
     pdfVisual: false,   // both files are PDFs (visual diff available)
     pdfMode: "visual",  // visual | text  (when pdfVisual)
     pdfData: null,      // rendered pages + highlight boxes
+    docVisual: false,   // both files are Word docs (visual diff available)
+    docMode: "visual",  // visual | text  (when docVisual)
+    docData: null,      // marked HTML + stats
+    nbVisual: false,    // both files are Jupyter notebooks
+    nbMode: "visual",   // visual | text  (when nbVisual)
+    nbData: null,       // rendered cells + stats
     rows: [],
     gridData: null,
     navTargets: [],
@@ -181,6 +189,12 @@
     state.pdfVisual = !!(state.a.kind === "pdf" && state.b.kind === "pdf" && state.a.pdfPages && state.b.pdfPages);
     if (state.pdfVisual) state.pdfMode = "visual";
     state.pdfData = null;
+    state.docVisual = !!(state.a.kind === "doc" && state.b.kind === "doc" && state.a.docHtml && state.b.docHtml);
+    if (state.docVisual) state.docMode = "visual";
+    state.docData = null;
+    state.nbVisual = !!(state.a.kind === "notebook" && state.b.kind === "notebook" && state.a.nbCells && state.b.nbCells);
+    if (state.nbVisual) state.nbMode = "visual";
+    state.nbData = null;
     rebuildDiff();
     uploadEl.classList.add("hidden");
     toolbarEl.classList.remove("hidden");
@@ -190,6 +204,8 @@
 
   function isGrid() { return state.tabular && state.gridMode; }
   function isVisualPdf() { return state.pdfVisual && state.pdfMode === "visual"; }
+  function isVisualDoc() { return state.docVisual && state.docMode === "visual"; }
+  function isVisualNb() { return state.nbVisual && state.nbMode === "visual"; }
 
   function showLoading(on, label) {
     if (label) loadingEl.querySelector("span").textContent = label;
@@ -201,6 +217,22 @@
 
     if (isVisualPdf()) {
       if (!state.pdfData) state.pdfData = PV.build(state.a, state.b);
+      updateToolbarForMode();
+      renderAll();
+      updateStats();
+      return;
+    }
+
+    if (isVisualDoc()) {
+      if (!state.docData) state.docData = DV.build(state.a, state.b);
+      updateToolbarForMode();
+      renderAll();
+      updateStats();
+      return;
+    }
+
+    if (isVisualNb()) {
+      if (!state.nbData) state.nbData = NV.build(state.a, state.b);
       updateToolbarForMode();
       renderAll();
       updateStats();
@@ -220,6 +252,18 @@
   function renderAll() {
     if (isVisualPdf()) {
       PV.render(diffEl, state);
+      scanNav();
+      updateNav();
+      return;
+    }
+    if (isVisualDoc()) {
+      DV.render(diffEl, state);
+      scanNav();
+      updateNav();
+      return;
+    }
+    if (isVisualNb()) {
+      NV.render(diffEl, state);
       scanNav();
       updateNav();
       return;
@@ -247,15 +291,20 @@
   function updateToolbarForMode() {
     const grid = isGrid();
     const vpdf = isVisualPdf();
+    const vdoc = isVisualDoc();
+    const vnb = isVisualNb();
+    const visual = vpdf || vdoc || vnb;   // a rendered view (PDF / Word / Notebook)
     $("#gridSeg").classList.toggle("hidden", !state.tabular);
     $("#pdfSeg").classList.toggle("hidden", !state.pdfVisual);
-    // In visual PDF mode, line-oriented text controls don't apply — but
-    // "Focus changes" does (it collapses to just the changed pages).
-    $("#viewGroup").classList.toggle("hidden", vpdf);
+    $("#docSeg").classList.toggle("hidden", !state.docVisual);
+    $("#nbSeg").classList.toggle("hidden", !state.nbVisual);
+    // In a visual view, line-oriented text controls don't apply — but
+    // "Focus changes" does (it collapses to just the changed content).
+    $("#viewGroup").classList.toggle("hidden", visual);
     $("#optGroup").classList.remove("hidden");
-    $("#wsToggle").classList.toggle("hidden", vpdf);
-    $("#highlightGroup").classList.toggle("hidden", grid || vpdf);
-    $("#searchGroup").classList.toggle("hidden", vpdf);
+    $("#wsToggle").classList.toggle("hidden", visual);
+    $("#highlightGroup").classList.toggle("hidden", grid || visual);
+    $("#searchGroup").classList.toggle("hidden", visual);
     $("#statMod").classList.toggle("hidden", !grid);
     if (state.tabular) {
       document.querySelectorAll("[data-tab]").forEach(b =>
@@ -264,6 +313,14 @@
     if (state.pdfVisual) {
       document.querySelectorAll("[data-pdftab]").forEach(b =>
         b.classList.toggle("active", b.dataset.pdftab === state.pdfMode));
+    }
+    if (state.docVisual) {
+      document.querySelectorAll("[data-doctab]").forEach(b =>
+        b.classList.toggle("active", b.dataset.doctab === state.docMode));
+    }
+    if (state.nbVisual) {
+      document.querySelectorAll("[data-nbtab]").forEach(b =>
+        b.classList.toggle("active", b.dataset.nbtab === state.nbMode));
     }
   }
 
@@ -287,6 +344,18 @@
   function updateStats() {
     if (isVisualPdf()) {
       const s = state.pdfData ? state.pdfData.stats : { add: 0, del: 0 };
+      $("#statAdd").textContent = "+" + s.add;
+      $("#statDel").textContent = "−" + s.del;
+      return;
+    }
+    if (isVisualDoc()) {
+      const s = state.docData ? state.docData.stats : { add: 0, del: 0 };
+      $("#statAdd").textContent = "+" + s.add;
+      $("#statDel").textContent = "−" + s.del;
+      return;
+    }
+    if (isVisualNb()) {
+      const s = state.nbData ? state.nbData.stats : { add: 0, del: 0 };
       $("#statAdd").textContent = "+" + s.add;
       $("#statDel").textContent = "−" + s.del;
       return;
@@ -319,6 +388,32 @@
         const key = row.dataset.page + ":" + Math.round(parseFloat(el.style.top));
         if (seen.has(key)) return;
         seen.add(key);
+        state.navTargets.push(el);
+      });
+      if (state.currentHunk >= state.navTargets.length) state.currentHunk = -1;
+      return;
+    }
+    if (isVisualDoc()) {
+      scope = diffEl.querySelector(".doc-pages");
+      if (!scope) return;
+      const seen = new Set();
+      scope.querySelectorAll(".dv-mark").forEach(el => {
+        const id = el.dataset.chg;
+        if (seen.has(id)) return;
+        seen.add(id);
+        state.navTargets.push(el);
+      });
+      if (state.currentHunk >= state.navTargets.length) state.currentHunk = -1;
+      return;
+    }
+    if (isVisualNb()) {
+      scope = diffEl.querySelector(".nb-cells");
+      if (!scope) return;
+      const seen = new Set();
+      scope.querySelectorAll(".dv-mark").forEach(el => {
+        const id = el.dataset.chg;
+        if (!id || seen.has(id)) return;
+        seen.add(id);
         state.navTargets.push(el);
       });
       if (state.currentHunk >= state.navTargets.length) state.currentHunk = -1;
@@ -437,6 +532,8 @@
     state.search = ""; state.searchIdx = -1; state.currentHunk = -1;
     state.view = "split"; state.focus = false; state.gridMode = true;
     state.pdfVisual = false; state.pdfMode = "visual"; state.pdfData = null;
+    state.docVisual = false; state.docMode = "visual"; state.docData = null;
+    state.nbVisual = false; state.nbMode = "visual"; state.nbData = null;
     state.forced = new Set();
     $("#searchInput").value = "";
     $("#searchCount").textContent = "";
@@ -499,6 +596,36 @@
         updateStats();
       });
     });
+    // visual / text segmented (Word docs only)
+    document.querySelectorAll("[data-doctab]").forEach(b => {
+      b.addEventListener("click", () => {
+        if (state.docMode === b.dataset.doctab) return;
+        state.docMode = b.dataset.doctab;
+        state.currentHunk = -1;
+        if (state.docMode === "text") {
+          state.rows = E.buildRows(state.a.text, state.b.text, { ignoreWs: state.ignoreWs });
+        }
+        document.querySelectorAll("[data-doctab]").forEach(x => x.classList.toggle("active", x === b));
+        updateToolbarForMode();
+        renderAll();
+        updateStats();
+      });
+    });
+    // visual / text segmented (Jupyter notebooks only)
+    document.querySelectorAll("[data-nbtab]").forEach(b => {
+      b.addEventListener("click", () => {
+        if (state.nbMode === b.dataset.nbtab) return;
+        state.nbMode = b.dataset.nbtab;
+        state.currentHunk = -1;
+        if (state.nbMode === "text") {
+          state.rows = E.buildRows(state.a.text, state.b.text, { ignoreWs: state.ignoreWs });
+        }
+        document.querySelectorAll("[data-nbtab]").forEach(x => x.classList.toggle("active", x === b));
+        updateToolbarForMode();
+        renderAll();
+        updateStats();
+      });
+    });
     // focus toggle
     $("#focusToggle").addEventListener("click", () => {
       state.focus = !state.focus;
@@ -537,6 +664,8 @@
       slot.a = state.a; slot.b = state.b;
       state.currentHunk = -1;
       state.pdfData = null;
+      state.docData = null;
+      state.nbData = null;
       rebuildDiff();
       toast("Swapped sides");
     });
