@@ -249,9 +249,11 @@
     const vpdf = isVisualPdf();
     $("#gridSeg").classList.toggle("hidden", !state.tabular);
     $("#pdfSeg").classList.toggle("hidden", !state.pdfVisual);
-    // In visual PDF mode, line-oriented text controls don't apply.
+    // In visual PDF mode, line-oriented text controls don't apply — but
+    // "Focus changes" does (it collapses to just the changed pages).
     $("#viewGroup").classList.toggle("hidden", vpdf);
-    $("#optGroup").classList.toggle("hidden", vpdf);
+    $("#optGroup").classList.remove("hidden");
+    $("#wsToggle").classList.toggle("hidden", vpdf);
     $("#highlightGroup").classList.toggle("hidden", grid || vpdf);
     $("#searchGroup").classList.toggle("hidden", vpdf);
     $("#statMod").classList.toggle("hidden", !grid);

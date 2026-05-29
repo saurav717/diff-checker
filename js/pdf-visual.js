@@ -124,11 +124,24 @@
         `</div><h2>The PDFs look identical</h2><p>No text differences detected across ${data.pages.length} page${data.pages.length > 1 ? "s" : ""}.</p></div>`;
     }
 
+    // "Focus changes" collapses to just the pages that changed,
+    // keeping their original page numbers.
+    const list = data.pages
+      .map((pg, i) => ({ pg, n: i + 1 }))
+      .filter(x => (state.focus ? x.pg.changed : true));
+
+    if (state.focus && list.length && data.stats.add + data.stats.del > 0) {
+      const hidden = data.pages.length - list.length;
+      if (hidden > 0) {
+        html += `<div class="pdf-focusnote">Showing ${list.length} changed page${list.length > 1 ? "s" : ""} · ${hidden} unchanged page${hidden > 1 ? "s" : ""} hidden</div>`;
+      }
+    }
+
     html += `<div class="pdf-pages">`;
-    data.pages.forEach((pg, i) => {
-      html += `<div class="pdf-row${pg.changed ? " has-change" : ""}" data-page="${i + 1}">` +
+    list.forEach(({ pg, n }) => {
+      html += `<div class="pdf-row${pg.changed ? " has-change" : ""}" data-page="${n}">` +
         `<div class="pdf-cell">${pageSideHtml(pg.a, "del")}</div>` +
-        `<div class="pdf-pnum">${i + 1}</div>` +
+        `<div class="pdf-pnum">${n}</div>` +
         `<div class="pdf-cell">${pageSideHtml(pg.b, "add")}</div>` +
         `</div>`;
     });
