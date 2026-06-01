@@ -16,6 +16,40 @@
     return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
+  /* Map a Word font name to a stack that leads with a metric-compatible
+     web font (loaded in index.html) so the page matches Word's metrics
+     even when the original font isn't installed. */
+  function mapFont(name) {
+    if (!name) return null;
+    const n = name.toLowerCase();
+    if (n.includes("calibri")) return "'Carlito','Calibri',sans-serif";
+    if (n.includes("cambria")) return "'Caladea','Cambria',Georgia,serif";
+    if (n.includes("times")) return "'Tinos','Times New Roman',Times,serif";
+    if (n.includes("arial") || n.includes("helvetica")) return "'Arimo','Arial',Helvetica,sans-serif";
+    if (n.includes("garamond")) return "'EB Garamond',Garamond,'Times New Roman',serif";
+    if (n.includes("georgia")) return "Georgia,'Times New Roman',serif";
+    if (n.includes("verdana")) return "Verdana,Geneva,sans-serif";
+    if (n.includes("tahoma")) return "Tahoma,Geneva,sans-serif";
+    if (n.includes("courier") || n.includes("consolas") || n.includes("mono"))
+      return "'Cousine','Courier New',monospace";
+    // Unknown named font: try it, then fall back to Calibri's clone.
+    return `'${name.replace(/'/g, "")}','Carlito',sans-serif`;
+  }
+
+  /* Build the inline style that makes a .doc-page reproduce the source
+     document's font, size and spacing as Microsoft Word would show it. */
+  function pageStyle(d) {
+    const s = (d && d.docStyle) || {};
+    const out = [];
+    const fam = mapFont(s.font);
+    if (fam) out.push(`font-family:${fam}`);
+    out.push(`font-size:${s.sizePt ? s.sizePt : 11}pt`);            // Word default body = 11pt
+    out.push(`line-height:${s.lineHeight ? s.lineHeight : 1.08}`);   // Word default = 1.08
+    out.push(`--doc-after:${s.afterPt != null ? s.afterPt : 8}pt`);  // space after para
+    out.push(`--doc-before:${s.beforePt != null ? s.beforePt : 0}pt`);
+    return out.join(";");
+  }
+
   /* Parse HTML into a detached root and collect word tokens with
      references to their text node + offsets. */
   function tokenize(html) {
@@ -111,8 +145,8 @@
     }
 
     html += `<div class="doc-pages${state.focus ? " focused" : ""}">` +
-      `<div class="doc-cell"><div class="doc-page" data-side="a">${data.htmlA}</div></div>` +
-      `<div class="doc-cell"><div class="doc-page" data-side="b">${data.htmlB}</div></div>` +
+      `<div class="doc-cell"><div class="doc-page" data-side="a" style="${pageStyle(state.a)}">${data.htmlA}</div></div>` +
+      `<div class="doc-cell"><div class="doc-page" data-side="b" style="${pageStyle(state.b)}">${data.htmlB}</div></div>` +
       `</div></div>`;
     container.innerHTML = html;
 

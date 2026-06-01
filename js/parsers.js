@@ -119,6 +119,72 @@
   }
 
   /* ---------- Word (.docx) via mammoth ---------- */
+
+  /* Read the document's own default typography (font, size, line &
+     paragraph spacing) out of word/styles.xml so the visual page diff
+     renders with the same metrics Microsoft Word would use. mammoth
+     strips this information from its HTML, so we recover it directly
+     from the .docx package (which is a zip) via JSZip. */
+  async function extractDocxStyle(buf) {
+    const out = { font: null, sizePt: null, lineHeight: null, afterPt: null, beforePt: null };
+    if (typeof JSZip === "undefined") return out;
+    try {
+      const zip = await JSZip.loadAsync(buf);
+      const f = zip.file("word/styles.xml");
+      if (!f) return out;
+      const xml = await f.async("string");
+      const doc = new DOMParser().parseFromString(xml, "application/xml");
+      const NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+      const child = (parent, tag) => parent ? parent.getElementsByTagNameNS(NS, tag)[0] : null;
+      const attr = (el, name) => (el ? el.getAttributeNS(NS, name) : null);
+
+      const readRPr = (rPr) => {
+        if (!rPr) return;
+        const rFonts = child(rPr, "rFonts");
+        const fam = rFonts && (attr(rFonts, "ascii") || attr(rFonts, "hAnsi") || attr(rFonts, "cs"));
+        if (fam && !out.font) out.font = fam;
+        const sz = child(rPr, "sz");
+        const v = sz && attr(sz, "val");
+        if (v && out.sizePt == null) out.sizePt = parseInt(v, 10) / 2; // val is in half-points
+      };
+      const readPPr = (pPr) => {
+        if (!pPr) return;
+        const sp = child(pPr, "spacing");
+        if (!sp) return;
+        const line = attr(sp, "line");
+        const lineRule = attr(sp, "lineRule");
+        if (line && out.lineHeight == null && (lineRule === "auto" || !lineRule)) {
+          out.lineHeight = parseInt(line, 10) / 240; // 240ths of a line
+        }
+        const after = attr(sp, "after");
+        if (after != null && out.afterPt == null) out.afterPt = parseInt(after, 10) / 20; // twips → pt
+        const before = attr(sp, "before");
+        if (before != null && out.beforePt == null) out.beforePt = parseInt(before, 10) / 20;
+      };
+
+      const root = doc.documentElement;
+      const docDefaults = child(root, "docDefaults");
+      if (docDefaults) {
+        readRPr(child(child(docDefaults, "rPrDefault"), "rPr"));
+        readPPr(child(child(docDefaults, "pPrDefault"), "pPr"));
+      }
+      // The default paragraph style (usually "Normal") overrides docDefaults.
+      const styles = root.getElementsByTagNameNS(NS, "style");
+      for (let i = 0; i < styles.length; i++) {
+        const st = styles[i];
+        const id = (attr(st, "styleId") || "").toLowerCase();
+        const isDefaultPara = attr(st, "type") === "paragraph" &&
+          (attr(st, "default") === "1" || attr(st, "default") === "true");
+        if (id === "normal" || id === "standard" || isDefaultPara) {
+          readRPr(child(st, "rPr"));
+          readPPr(child(st, "pPr"));
+          if (id === "normal" || id === "standard") break;
+        }
+      }
+      return out;
+    } catch (_) { return out; }
+  }
+
   async function parseDocx(file) {
     if (typeof mammoth === "undefined") throw new Error("Word document parser failed to load.");
     const buf = await file.arrayBuffer();
@@ -134,7 +200,10 @@
       docHtml = (h && h.value && h.value.trim()) ? h.value : null;
     } catch (_) { docHtml = null; }
 
-    return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc", docHtml };
+    // Recover the document's native typography for a Word-faithful render.
+    const docStyle = await extractDocxStyle(buf);
+
+    return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc", docHtml, docStyle };
   }
 
   /* ---------- PDF via pdf.js ----------
@@ -149,6 +218,9 @@
   async function parsePdf(file) {
     if (typeof pdfjsLib === "undefined") throw new Error("PDF parser failed to load.");
     const buf = await file.arrayBuffer();
+    // Keep an untouched copy so we can re-render pages at higher resolution
+    // for OCR later (pdf.js may detach the buffer it's handed).
+    const ocrBuffer = buf.slice(0);
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
     const out = [];
     const pages = [];
@@ -231,8 +303,42 @@
       text: out.join("\n"),
       kind: "pdf",
       pageCount: pdf.numPages,
-      pdfPages: (visualOk && pages.length) ? pages : null
+      pdfPages: (visualOk && pages.length) ? pages : null,
+      ocrBuffer
     };
+  }
+
+  /* Re-render PDF pages to high-resolution bitmaps for OCR. Small text
+     (footnotes, fine print) is illegible to the recognizer at the modest
+     scale we use for the on-screen diff, so we rasterise at a higher scale
+     here. Returns [{ url, vw, vh }] in the hi-res pixel space. */
+  async function renderPdfImages(buffer, scale) {
+    if (typeof pdfjsLib === "undefined") throw new Error("PDF renderer unavailable.");
+    const pdf = await pdfjsLib.getDocument({ data: buffer.slice(0) }).promise;
+    const out = [];
+    try {
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        // Cap the long edge so very large pages don't blow up memory.
+        let s = scale;
+        const base = page.getViewport({ scale: 1 });
+        const longEdge = Math.max(base.width, base.height) * s;
+        if (longEdge > 3400) s = scale * (3400 / longEdge);
+        const vp = page.getViewport({ scale: s });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(vp.width);
+        canvas.height = Math.ceil(vp.height);
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        out.push({ url: canvas.toDataURL("image/png"), vw: canvas.width, vh: canvas.height });
+        canvas.width = canvas.height = 0;
+      }
+    } finally {
+      try { await pdf.destroy(); } catch (_) {}
+    }
+    return out;
   }
 
   /* ============================================================
@@ -481,5 +587,5 @@
     return out.join("\n");
   }
 
-  window.DiffParse = { parseFile, kindLabel, ext };
+  window.DiffParse = { parseFile, kindLabel, ext, renderPdfImages };
 })();

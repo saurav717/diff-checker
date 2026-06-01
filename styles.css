@@ -89,6 +89,8 @@ html, body {
   font-size: 15px;
 }
 .brand svg { display: block; }
+.brand-logo { height: 26px; width: auto; display: block; }
+.brand-div { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex: 0 0 auto; }
 .brand .tag {
   font-family: var(--mono);
   font-size: 11px;
@@ -666,8 +668,11 @@ mark.s-hit.current { background: #ffb938; box-shadow: 0 0 0 2px #d98a00 inset; }
   mix-blend-mode: multiply;
   transition: outline-color .15s;
 }
-.pdf-hl.del { background: var(--del-word); outline: 1.5px solid transparent; }
-.pdf-hl.add { background: var(--add-word); outline: 1.5px solid transparent; }
+.pdf-hl.del { background: rgba(207, 34, 46, 0.20); outline: 1.5px solid transparent; }
+.pdf-hl.add { background: rgba(31, 136, 61, 0.20); outline: 1.5px solid transparent; }
+.pdf-hl.mod { background: rgba(181, 116, 10, 0.22); outline: 1.5px solid transparent; }
+.pdf-hl-whole { background: transparent !important; outline: 3px dashed var(--del-sign); outline-offset: -3px; }
+.pdf-hl.add.pdf-hl-whole { outline-color: var(--add-sign); }
 
 /* active change target */
 .pdf-hl.change-target {
@@ -676,6 +681,47 @@ mark.s-hit.current { background: #ffb938; box-shadow: 0 0 0 2px #d98a00 inset; }
 }
 .pdf-hl.del.change-target { outline-color: var(--del-sign); }
 .pdf-hl.add.change-target { outline-color: var(--add-sign); }
+.pdf-hl.mod.change-target { outline-color: var(--mod-sign); }
+
+/* note shown when pages fell back to pixel-level comparison */
+.pdf-pixelnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 14px 18px 0;
+  padding: 11px 14px;
+  background: var(--mod-line);
+  border: 1px solid var(--mod-cell-r);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--mod-text);
+}
+.pdf-pixelnote svg { flex: 0 0 auto; margin-top: 1px; color: var(--mod-sign); }
+.pdf-pixelnote strong { font-weight: 600; }
+.pdf-pixelnote .pn-text { flex: 1; min-width: 0; }
+.pdf-ocr-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--mod-sign);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pdf-ocr-btn svg { color: #fff; margin-top: 0; }
+.pdf-ocr-btn:hover { filter: brightness(1.06); }
+.pdf-ocr-btn[disabled] { opacity: .55; cursor: default; }
+.pdf-ocrnote { background: var(--add-line); border-color: var(--add-word); color: var(--add-text); }
+.pdf-ocrnote svg { color: var(--add-sign); }
 
 .pdf-identical {
   display: flex;
@@ -783,32 +829,38 @@ mark.s-hit.current { background: #ffb938; box-shadow: 0 0 0 2px #d98a00 inset; }
   box-shadow: var(--shadow-md);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 56px 60px;
-  font-family: var(--sans);
-  font-size: 15px;
-  line-height: 1.65;
-  color: var(--text);
+  padding: 64px 60px;
+  /* Word-faithful defaults — overridden per-document via inline style.
+     Carlito is the metric clone of Calibri (Word's default body font). */
+  font-family: "Carlito", "Calibri", sans-serif;
+  font-size: 11pt;
+  line-height: 1.08;
+  color: #000;
+  --doc-after: 8pt;
+  --doc-before: 0pt;
   overflow-wrap: anywhere;
 }
-/* prose styling for the mammoth-generated HTML */
+/* prose styling for the mammoth-generated HTML — spacing mirrors Word */
 .doc-page > :first-child { margin-top: 0; }
 .doc-page > :last-child { margin-bottom: 0; }
-.doc-page h1, .doc-page h2, .doc-page h3 {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
-  margin: 1.4em 0 0.5em;
+.doc-page h1, .doc-page h2, .doc-page h3, .doc-page h4 {
+  font-family: inherit;
+  font-weight: 400;
+  color: #2e74b5;            /* Word's default heading colour (Accent 1, darker) */
+  line-height: 1.15;
+  margin: 14pt 0 4pt;
 }
-.doc-page h1 { font-size: 1.6em; }
-.doc-page h2 { font-size: 1.3em; }
-.doc-page h3 { font-size: 1.1em; }
-.doc-page p { margin: 0 0 0.85em; }
-.doc-page ul, .doc-page ol { margin: 0 0 0.85em; padding-left: 1.5em; }
-.doc-page li { margin: 0.2em 0; }
-.doc-page table { border-collapse: collapse; margin: 0 0 0.85em; font-size: 0.95em; }
-.doc-page td, .doc-page th { border: 1px solid var(--border-strong); padding: 5px 9px; text-align: left; }
+.doc-page h1 { font-size: 16pt; color: #2e74b5; }
+.doc-page h2 { font-size: 13pt; }
+.doc-page h3 { font-size: 12pt; font-weight: 700; }
+.doc-page h4 { font-size: 11pt; font-weight: 700; font-style: italic; }
+.doc-page p { margin: var(--doc-before) 0 var(--doc-after); }
+.doc-page ul, .doc-page ol { margin: var(--doc-before) 0 var(--doc-after); padding-left: 36pt; }
+.doc-page li { margin: 0; }
+.doc-page table { border-collapse: collapse; margin: var(--doc-before) 0 var(--doc-after); font-size: inherit; }
+.doc-page td, .doc-page th { border: 1px solid #000; padding: 2pt 6pt; text-align: left; vertical-align: top; }
 .doc-page img { max-width: 100%; height: auto; }
-.doc-page a { color: var(--accent); }
+.doc-page a { color: #0563c1; text-decoration: underline; }
 
 /* inline change marks */
 mark.dv-mark { border-radius: 2px; padding: 0 1px; color: inherit; }

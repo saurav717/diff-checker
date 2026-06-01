@@ -24,6 +24,7 @@
     pdfVisual: false,   // both files are PDFs (visual diff available)
     pdfMode: "visual",  // visual | text  (when pdfVisual)
     pdfData: null,      // rendered pages + highlight boxes
+    ocrActive: false,   // text was recovered with OCR (forces word diff)
     docVisual: false,   // both files are Word docs (visual diff available)
     docMode: "visual",  // visual | text  (when docVisual)
     docData: null,      // marked HTML + stats
@@ -205,6 +206,8 @@
   function isGrid() { return state.tabular && state.gridMode; }
   function isVisualPdf() { return state.pdfVisual && state.pdfMode === "visual"; }
   function isVisualDoc() { return state.docVisual && state.docMode === "visual"; }
+  // Text source for the line-diff: recovered OCR text when active, else extracted text.
+  function srcText(f) { return (state.ocrActive && f && f.ocrText) ? f.ocrText : (f ? f.text : ""); }
   function isVisualNb() { return state.nbVisual && state.nbMode === "visual"; }
 
   function showLoading(on, label) {
@@ -216,7 +219,17 @@
     state.forced = new Set();
 
     if (isVisualPdf()) {
-      if (!state.pdfData) state.pdfData = PV.build(state.a, state.b);
+      if (!state.pdfData) {
+        showLoading(true, "Comparing pages…");
+        PV.build(state.a, state.b, { ocr: state.ocrActive }).then(d => {
+          state.pdfData = d;
+          showLoading(false);
+          updateToolbarForMode();
+          renderAll();
+          updateStats();
+        });
+        return;
+      }
       updateToolbarForMode();
       renderAll();
       updateStats();
@@ -242,11 +255,88 @@
     if (isGrid()) {
       state.gridData = GD.buildGridDiff(state.a.sheets, state.b.sheets, { ignoreWs: state.ignoreWs });
     } else {
-      state.rows = E.buildRows(state.a.text, state.b.text, { ignoreWs: state.ignoreWs });
+      state.rows = E.buildRows(srcText(state.a), srcText(state.b), { ignoreWs: state.ignoreWs });
     }
     updateToolbarForMode();
     renderAll();
     updateStats();
+  }
+
+  /* Recover text from PDFs whose text layer is unreliable, using OCR on
+     the already-rendered page bitmaps, then re-run the precise word diff.
+     Only the file(s) with a weak text layer are OCR'd — a file that already
+     has good extracted text keeps it (faster, and more accurate). */
+  async function runOcr() {
+    if (!window.OCR || !OCR.available()) { toast("OCR engine isn’t available."); return; }
+    const btn = document.getElementById("ocrBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+
+    // OCR BOTH files so recognition is consistent — comparing OCR text on one
+    // side against natively-extracted text on the other produces noisy diffs
+    // on common text (punctuation/bullets tokenise differently). Identical
+    // content recognised by the same engine cancels out cleanly.
+    const todo = [];
+    [["A", state.a], ["B", state.b]].forEach(([label, f]) => {
+      if (!f.ocrDone && f.pdfPages) todo.push([label, f]);
+    });
+
+    showLoading(true, "Starting OCR…");
+    try {
+      // Warm the engine (downloads the language model on first use) with feedback.
+      await OCR.ensure((frac, status) => showLoading(true, `Preparing OCR — ${status}… ${Math.round(frac * 100)}%`));
+
+      for (let t = 0; t < todo.length; t++) {
+        const [label, f] = todo[t];
+        const pages = f.pdfPages.length;
+
+        // Re-render at high resolution so small text is legible to OCR.
+        let images = f.pdfPages.map(p => ({ url: p.url, vw: p.vw, vh: p.vh }));
+        if (f.ocrBuffer && DiffParse.renderPdfImages) {
+          try {
+            showLoading(true, `Rendering ${todo.length > 1 ? "file " + label + " " : ""}at high resolution for OCR…`);
+            const hi = await DiffParse.renderPdfImages(f.ocrBuffer, 3.2);
+            if (hi.length === pages) images = hi;
+          } catch (_) { /* fall back to the on-screen bitmaps */ }
+        }
+
+        const res = await OCR.run(images, (frac, status) => {
+          const pageNo = Math.min(pages, Math.floor(frac * pages) + 1);
+          const where = pages > 1 ? `page ${pageNo}/${pages} · ` : "";
+          const scope = todo.length > 1 ? `file ${label} · ` : "";
+          showLoading(true, `Reading text with OCR — ${scope}${where}${status}… ${Math.round(frac * 100)}%`);
+        });
+
+        // Map recognised word boxes from the (hi-res) OCR image space back to
+        // the on-screen page coordinate space the highlights are drawn in.
+        f.pdfPages.forEach((pg, i) => {
+          const src = images[i];
+          const fx = src && src.vw ? pg.vw / src.vw : 1;
+          const fy = src && src.vh ? pg.vh / src.vh : 1;
+          const ws = (res.pages[i] && res.pages[i].words) || [];
+          pg.words = ws.map(w => ({ str: w.str, x: w.x * fx, y: w.y * fy, w: w.w * fx, h: w.h * fy }));
+        });
+        f.ocrText = res.text;
+        f.ocrDone = true;
+      }
+
+      state.ocrActive = true;
+      state.currentHunk = -1;
+      showLoading(true, "Comparing recovered text…");
+      state.pdfData = await PV.build(state.a, state.b, { ocr: true });
+      if (state.pdfMode === "text") {
+        state.rows = E.buildRows(srcText(state.a), srcText(state.b), { ignoreWs: state.ignoreWs });
+      }
+      showLoading(false);
+      updateToolbarForMode();
+      renderAll();
+      updateStats();
+      toast("Text recovered with OCR");
+    } catch (e) {
+      console.error(e);
+      showLoading(false);
+      toast("OCR failed — please try again.");
+      if (btn) { btn.disabled = false; btn.textContent = "Read text with OCR & compare"; }
+    }
   }
 
   function renderAll() {
@@ -343,9 +433,14 @@
 
   function updateStats() {
     if (isVisualPdf()) {
-      const s = state.pdfData ? state.pdfData.stats : { add: 0, del: 0 };
+      const s = state.pdfData ? state.pdfData.stats : { add: 0, del: 0, mod: 0 };
       $("#statAdd").textContent = "+" + s.add;
       $("#statDel").textContent = "−" + s.del;
+      const modEl = $("#statMod");
+      if (modEl) {
+        modEl.textContent = "~" + (s.mod || 0);
+        modEl.classList.toggle("hidden", !s.mod);
+      }
       return;
     }
     if (isVisualDoc()) {
@@ -531,7 +626,7 @@
     state.a = null; state.b = null;
     state.search = ""; state.searchIdx = -1; state.currentHunk = -1;
     state.view = "split"; state.focus = false; state.gridMode = true;
-    state.pdfVisual = false; state.pdfMode = "visual"; state.pdfData = null;
+    state.pdfVisual = false; state.pdfMode = "visual"; state.pdfData = null; state.ocrActive = false;
     state.docVisual = false; state.docMode = "visual"; state.docData = null;
     state.nbVisual = false; state.nbMode = "visual"; state.nbData = null;
     state.forced = new Set();
@@ -588,13 +683,17 @@
         state.pdfMode = b.dataset.pdftab;
         state.currentHunk = -1;
         if (state.pdfMode === "text") {
-          state.rows = E.buildRows(state.a.text, state.b.text, { ignoreWs: state.ignoreWs });
+          state.rows = E.buildRows(srcText(state.a), srcText(state.b), { ignoreWs: state.ignoreWs });
         }
         document.querySelectorAll("[data-pdftab]").forEach(x => x.classList.toggle("active", x === b));
         updateToolbarForMode();
         renderAll();
         updateStats();
       });
+    });
+    // OCR button inside the PDF "pixel-compared" note (delegated — note is re-rendered)
+    diffEl.addEventListener("click", (e) => {
+      if (e.target.closest("#ocrBtn")) runOcr();
     });
     // visual / text segmented (Word docs only)
     document.querySelectorAll("[data-doctab]").forEach(b => {

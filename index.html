@@ -7,12 +7,20 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Metric-compatible clones of common Word fonts so .docx pages render
+     with the same letter shapes & spacing they have in Microsoft Word:
+     Carlito≈Calibri, Tinos≈Times New Roman, Arimo≈Arial,
+     Caladea≈Cambria, Cousine≈Courier New/Consolas, EB Garamond≈Garamond -->
+<link href="https://fonts.googleapis.com/css2?family=Arimo:ital,wght@0,400;0,700;1,400;1,700&family=Caladea:ital,wght@0,400;0,700;1,400;1,700&family=Carlito:ital,wght@0,400;0,700;1,400;1,700&family=Cousine:ital,wght@0,400;0,700;1,400;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 
 <!-- Parsing + diff libraries -->
 <script src="https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<!-- OCR engine (loaded lazily; only used when a PDF has no usable text layer) -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script>
@@ -28,6 +36,8 @@
   <!-- ===== Top bar ===== -->
   <header class="topbar">
     <div class="brand">
+      <img class="brand-logo" src="assets/swingtech-logo.png" alt="Swingtech">
+      <span class="brand-div"></span>
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <rect x="3" y="4" width="11" height="13" rx="2.5" fill="#ffeef0" stroke="#cf222e" stroke-width="1.5"/>
         <rect x="10" y="7" width="11" height="13" rx="2.5" fill="#e6ffec" stroke="#1f883d" stroke-width="1.5"/>
@@ -275,6 +285,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="js/parsers.js"></script>
+<script src="js/ocr.js"></script>
 <script src="js/diff-engine.js"></script>
 <script src="js/grid-diff.js"></script>
 <script src="js/pdf-visual.js"></script>
