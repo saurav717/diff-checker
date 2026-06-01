@@ -188,6 +188,9 @@
   async function parseDocx(file) {
     if (typeof mammoth === "undefined") throw new Error("Word document parser failed to load.");
     const buf = await file.arrayBuffer();
+    // Keep an untouched copy so the high-fidelity renderer (docx-preview) can
+    // re-render the document with its real layout, fonts, colours and images.
+    const docBuffer = buf.slice(0);
     const res = await mammoth.extractRawText({ arrayBuffer: buf });
     let text = res.value || "";
     // Collapse 3+ blank lines to a single blank line for readable diffs.
@@ -200,10 +203,10 @@
       docHtml = (h && h.value && h.value.trim()) ? h.value : null;
     } catch (_) { docHtml = null; }
 
-    // Recover the document's native typography for a Word-faithful render.
+    // Recover the document's native typography (fallback render).
     const docStyle = await extractDocxStyle(buf);
 
-    return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc", docHtml, docStyle };
+    return { name: file.name, text: normalizeNewlines(text).trimEnd(), kind: "doc", docHtml, docStyle, docBuffer };
   }
 
   /* ---------- PDF via pdf.js ----------

@@ -70,7 +70,18 @@
   }
 
   function buildGridDiff(sheetsA, sheetsB, opts) {
-    const pairs = pairSheets(sheetsA, sheetsB);
+    opts = opts || {};
+    let pairs;
+    if (opts.selA != null && opts.selB != null) {
+      // Explicit single-pair comparison: the user chose which sheet of each file.
+      const a = sheetsA.find(s => s.name === opts.selA) || sheetsA[0];
+      const b = sheetsB.find(s => s.name === opts.selB) || sheetsB[0];
+      const an = a ? a.name : "?", bn = b ? b.name : "?";
+      const name = an === bn ? an : `${an} → ${bn}`;
+      pairs = [{ name, gA: (a && a.grid) || [], gB: (b && b.grid) || [] }];
+    } else {
+      pairs = pairSheets(sheetsA, sheetsB);
+    }
     let addCells = 0, delCells = 0, modCells = 0;
     const sheets = pairs.map(p => {
       const rows = alignGrid(p.gA, p.gB, opts);

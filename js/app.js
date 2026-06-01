@@ -21,12 +21,15 @@
     granularity: "word",// word | char
     tabular: false,     // both files are spreadsheets/csv
     gridMode: true,     // show tabular data as a cell grid
+    sheetA: null,       // selected sheet name in file A (multi-sheet compare)
+    sheetB: null,       // selected sheet name in file B
     pdfVisual: false,   // both files are PDFs (visual diff available)
     pdfMode: "visual",  // visual | text  (when pdfVisual)
     pdfData: null,      // rendered pages + highlight boxes
     ocrActive: false,   // text was recovered with OCR (forces word diff)
     docVisual: false,   // both files are Word docs (visual diff available)
     docMode: "visual",  // visual | text  (when docVisual)
+    docGran: "word",    // word | sentence  (Word visual highlight granularity)
     docData: null,      // marked HTML + stats
     nbVisual: false,    // both files are Jupyter notebooks
     nbMode: "visual",   // visual | text  (when nbVisual)
@@ -186,7 +189,14 @@
     state.forced = new Set();
     state.currentHunk = -1;
     state.tabular = !!(state.a.sheets && state.b.sheets);
-    if (state.tabular) state.gridMode = true;
+    if (state.tabular) {
+      state.gridMode = true;
+      // Default sheet pairing: A's first sheet, matched to B by name if possible.
+      const aNames = state.a.sheets.map(s => s.name);
+      const bNames = state.b.sheets.map(s => s.name);
+      state.sheetA = aNames[0] || null;
+      state.sheetB = bNames.indexOf(state.sheetA) !== -1 ? state.sheetA : (bNames[0] || null);
+    }
     state.pdfVisual = !!(state.a.kind === "pdf" && state.b.kind === "pdf" && state.a.pdfPages && state.b.pdfPages);
     if (state.pdfVisual) state.pdfMode = "visual";
     state.pdfData = null;
@@ -204,6 +214,27 @@
   }
 
   function isGrid() { return state.tabular && state.gridMode; }
+  function multiSheet() {
+    return state.tabular && (
+      (state.a.sheets && state.a.sheets.length > 1) ||
+      (state.b.sheets && state.b.sheets.length > 1));
+  }
+  // Fill the sheet pickers from each workbook, reflecting the current choice.
+  function populateSheetSelectors() {
+    const selA = $("#sheetA"), selB = $("#sheetB");
+    if (!selA || !selB || !state.a.sheets || !state.b.sheets) return;
+    const fill = (sel, sheets, current) => {
+      sel.innerHTML = "";
+      sheets.forEach(s => {
+        const o = document.createElement("option");
+        o.value = s.name; o.textContent = s.name;
+        if (s.name === current) o.selected = true;
+        sel.appendChild(o);
+      });
+    };
+    fill(selA, state.a.sheets, state.sheetA);
+    fill(selB, state.b.sheets, state.sheetB);
+  }
   function isVisualPdf() { return state.pdfVisual && state.pdfMode === "visual"; }
   function isVisualDoc() { return state.docVisual && state.docMode === "visual"; }
   // Text source for the line-diff: recovered OCR text when active, else extracted text.
@@ -237,7 +268,17 @@
     }
 
     if (isVisualDoc()) {
-      if (!state.docData) state.docData = DV.build(state.a, state.b);
+      if (!state.docData) {
+        showLoading(true, "Rendering documents…");
+        DV.build(state.a, state.b, state.docGran).then(d => {
+          state.docData = d;
+          showLoading(false);
+          updateToolbarForMode();
+          renderAll();
+          updateStats();
+        });
+        return;
+      }
       updateToolbarForMode();
       renderAll();
       updateStats();
@@ -253,7 +294,8 @@
     }
 
     if (isGrid()) {
-      state.gridData = GD.buildGridDiff(state.a.sheets, state.b.sheets, { ignoreWs: state.ignoreWs });
+      state.gridData = GD.buildGridDiff(state.a.sheets, state.b.sheets,
+        { ignoreWs: state.ignoreWs, selA: state.sheetA, selB: state.sheetB });
     } else {
       state.rows = E.buildRows(srcText(state.a), srcText(state.b), { ignoreWs: state.ignoreWs });
     }
@@ -385,8 +427,11 @@
     const vnb = isVisualNb();
     const visual = vpdf || vdoc || vnb;   // a rendered view (PDF / Word / Notebook)
     $("#gridSeg").classList.toggle("hidden", !state.tabular);
+    $("#sheetSel").classList.toggle("hidden", !(grid && multiSheet()));
+    if (state.tabular) populateSheetSelectors();
     $("#pdfSeg").classList.toggle("hidden", !state.pdfVisual);
     $("#docSeg").classList.toggle("hidden", !state.docVisual);
+    $("#docGranGroup").classList.toggle("hidden", !isVisualDoc());
     $("#nbSeg").classList.toggle("hidden", !state.nbVisual);
     // In a visual view, line-oriented text controls don't apply — but
     // "Focus changes" does (it collapses to just the changed content).
@@ -407,6 +452,8 @@
     if (state.docVisual) {
       document.querySelectorAll("[data-doctab]").forEach(b =>
         b.classList.toggle("active", b.dataset.doctab === state.docMode));
+      document.querySelectorAll("[data-docgran]").forEach(b =>
+        b.classList.toggle("active", b.dataset.docgran === state.docGran));
     }
     if (state.nbVisual) {
       document.querySelectorAll("[data-nbtab]").forEach(b =>
@@ -626,8 +673,9 @@
     state.a = null; state.b = null;
     state.search = ""; state.searchIdx = -1; state.currentHunk = -1;
     state.view = "split"; state.focus = false; state.gridMode = true;
+    state.sheetA = null; state.sheetB = null;
     state.pdfVisual = false; state.pdfMode = "visual"; state.pdfData = null; state.ocrActive = false;
-    state.docVisual = false; state.docMode = "visual"; state.docData = null;
+    state.docVisual = false; state.docMode = "visual"; state.docData = null; state.docGran = "word";
     state.nbVisual = false; state.nbMode = "visual"; state.nbData = null;
     state.forced = new Set();
     $("#searchInput").value = "";
@@ -665,6 +713,14 @@
         document.querySelectorAll("[data-gran]").forEach(x => x.classList.toggle("active", x === b));
         renderAll();
       });
+    });
+    // sheet pickers (multi-sheet spreadsheets) — choose which sheet of each file to compare
+    const sheetSelA = $("#sheetA"), sheetSelB = $("#sheetB");
+    if (sheetSelA) sheetSelA.addEventListener("change", () => {
+      state.sheetA = sheetSelA.value; state.currentHunk = -1; rebuildDiff();
+    });
+    if (sheetSelB) sheetSelB.addEventListener("change", () => {
+      state.sheetB = sheetSelB.value; state.currentHunk = -1; rebuildDiff();
     });
     // grid / text segmented (spreadsheets only)
     document.querySelectorAll("[data-tab]").forEach(b => {
@@ -710,7 +766,22 @@
         updateStats();
       });
     });
-    // visual / text segmented (Jupyter notebooks only)
+    // Word visual highlight granularity: per-word vs whole-sentence
+    document.querySelectorAll("[data-docgran]").forEach(b => {
+      b.addEventListener("click", () => {
+        if (state.docGran === b.dataset.docgran) return;
+        state.docGran = b.dataset.docgran;
+        state.currentHunk = -1;
+        document.querySelectorAll("[data-docgran]").forEach(x => x.classList.toggle("active", x === b));
+        showLoading(true, "Updating highlights…");
+        DV.build(state.a, state.b, state.docGran).then(d => {
+          state.docData = d;
+          showLoading(false);
+          renderAll();
+          updateStats();
+        });
+      });
+    });
     document.querySelectorAll("[data-nbtab]").forEach(b => {
       b.addEventListener("click", () => {
         if (state.nbMode === b.dataset.nbtab) return;
