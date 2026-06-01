@@ -722,6 +722,9 @@ mark.s-hit.current { background: #ffb938; box-shadow: 0 0 0 2px #d98a00 inset; }
 .pdf-ocr-btn[disabled] { opacity: .55; cursor: default; }
 .pdf-ocrnote { background: var(--add-line); border-color: var(--add-word); color: var(--add-text); }
 .pdf-ocrnote svg { color: var(--add-sign); }
+.pdf-ocr-available { background: var(--surface-2); border-color: var(--border); color: var(--muted); }
+.pdf-ocr-available svg { color: var(--faint); }
+.pdf-ocr-available .pdf-ocr-btn { background: var(--accent); }
 
 .pdf-identical {
   display: flex;

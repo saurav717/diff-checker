@@ -425,18 +425,26 @@
         `</div><h2>The PDFs look identical</h2><p>No differences detected across ${data.pages.length} page${data.pages.length > 1 ? "s" : ""}.</p></div>`;
     }
 
-    if (data.usedOcr && total > 0) {
+    if (data.usedOcr) {
       html += `<div class="pdf-pixelnote pdf-ocrnote">` +
         `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M8 12h8"/></svg>` +
         `Text was recovered with <strong>OCR</strong> and compared word-by-word. Recognition isn’t perfect — a few highlights may reflect OCR misreads rather than real edits.` +
         `</div>`;
-    } else if (data.usedPixel && total > 0) {
+    } else if (data.usedPixel) {
       html += `<div class="pdf-pixelnote">` +
         `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>` +
         `<span class="pn-text">A file’s text layer was incomplete (often the case with filled, flattened or scanned PDFs), so those pages were compared <strong>visually, pixel-by-pixel</strong> — highlighting regions that look different rather than extracted words.</span>` +
         `<button class="pdf-ocr-btn" id="ocrBtn" type="button">` +
         `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M8 12h8"/></svg>` +
         `Read text with OCR &amp; compare</button>` +
+        `</div>`;
+    } else {
+      html += `<div class="pdf-pixelnote pdf-ocr-available">` +
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M8 12h8"/></svg>` +
+        `<span class="pn-text">Compared using extracted text. For scanned or image-only PDFs, try OCR for more accurate results.</span>` +
+        `<button class="pdf-ocr-btn" id="ocrBtn" type="button">` +
+        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M8 12h8"/></svg>` +
+        `Re-compare with OCR</button>` +
         `</div>`;
     }
 
