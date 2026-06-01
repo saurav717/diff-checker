@@ -89,8 +89,6 @@ html, body {
   font-size: 15px;
 }
 .brand svg { display: block; }
-.brand-logo { height: 26px; width: auto; display: block; }
-.brand-div { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex: 0 0 auto; }
 .brand .tag {
   font-family: var(--mono);
   font-size: 11px;
