@@ -94,7 +94,8 @@
         let cls = "";
         if (isLeft) { if (status === "del" || status === "mod") cls = "gc-del"; }
         else { if (status === "add" || status === "mod") cls = "gc-add"; }
-        tds += `<td class="gcell ${cls}">${val || "&nbsp;"}</td>`;
+        // Shared key so hovering a cell highlights the SAME cell in the other table.
+        tds += `<td class="gcell ${cls}" data-gk="${si}-${it.i}-${c}">${val || "&nbsp;"}</td>`;
       }
       body += `<tr class="gtr${payload ? "" : " gr-blank"}" data-type="${r.type}">${tds}</tr>`;
     }

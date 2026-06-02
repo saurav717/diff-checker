@@ -372,6 +372,8 @@
     let nb;
     try { nb = JSON.parse(await file.text()); }
     catch (_) { throw new Error(`"${file.name}" is not valid notebook JSON.`); }
+    const nbLang = (nb.metadata && ((nb.metadata.language_info && nb.metadata.language_info.name) ||
+                    (nb.metadata.kernelspec && nb.metadata.kernelspec.language))) || "python";
     const rawCells = Array.isArray(nb.cells) ? nb.cells
       : (nb.worksheets && nb.worksheets[0] && nb.worksheets[0].cells) || [];
     const cells = [];
@@ -382,10 +384,10 @@
       if (type === "markdown") {
         cells.push({ type: "markdown", source, html: renderMarkdown(source), outputs: [] });
       } else if (type === "code") {
-        cells.push({ type: "code", source, outputs: extractIpynbOutputs(c.outputs || []) });
+        cells.push({ type: "code", source, lang: nbLang, outputs: extractIpynbOutputs(c.outputs || []) });
       } else {
         // raw cell — show as plain preformatted text
-        cells.push({ type: "code", source, outputs: [], raw: true });
+        cells.push({ type: "code", source, lang: "plaintext", outputs: [], raw: true });
       }
     }
     return { name: file.name, text: notebookToText(cells), kind: "notebook", nbCells: cells };
@@ -468,7 +470,7 @@
           if (txt.trim()) outputs.push({ kind: "text", text: stripAnsi(txt.replace(/\n$/, "")) });
         });
         if (source.trim() === "" && outputs.length === 0) return; // skip empties
-        cells.push({ type: "code", source, outputs });
+        cells.push({ type: "code", source, lang: "python", outputs });
       }
     });
 
@@ -495,6 +497,11 @@
     const cmds = (model.commands || []).slice().sort((a, b) => (a.position || 0) - (b.position || 0));
     if (!cmds.length) return null;
 
+    const nbLang = (model.language || "python").toLowerCase();
+    // map a leading %-magic to its language (the cell may override the notebook default)
+    const MAGIC_LANG = { sql: "sql", scala: "scala", r: "r", python: "python", py: "python",
+                         sh: "bash", bash: "bash" };
+
     const cells = [];
     for (const c of cmds) {
       const raw = c.command || "";
@@ -505,8 +512,10 @@
         cells.push({ type: "markdown", source: src, html: renderMarkdown(src), outputs: [], title });
       } else {
         const outputs = c.hideCommandResult ? [] : extractDbxOutputs(c.results);
+        const magic = raw.match(/^%(\w+)/);
+        const lang = (magic && MAGIC_LANG[magic[1].toLowerCase()]) || nbLang;
         // keep the source verbatim (incl. any %sql/%sh/%run magic line)
-        cells.push({ type: "code", source: raw, outputs, title });
+        cells.push({ type: "code", source: raw, lang, outputs, title });
       }
     }
     if (!cells.length) return null;

@@ -30,6 +30,7 @@
     docVisual: false,   // both files are Word docs (visual diff available)
     docMode: "visual",  // visual | text  (when docVisual)
     docGran: "word",    // word | sentence  (Word visual highlight granularity)
+    linkMode: "changes",// changes | all  (hover-link mapping scope)
     docData: null,      // marked HTML + stats
     nbVisual: false,    // both files are Jupyter notebooks
     nbMode: "visual",   // visual | text  (when nbVisual)
@@ -381,23 +382,35 @@
     }
   }
 
+  function scheduleMinimap() {
+    if (!window.DiffMinimap) return;
+    // Centre ruler for side-by-side; move to the right edge for inline view.
+    const inlineView = state.view === "inline" && !isVisualPdf() && !isVisualDoc() && !isVisualNb();
+    DiffMinimap.setPlacement(inlineView ? "right" : "center");
+    requestAnimationFrame(() => DiffMinimap.refresh());
+    setTimeout(() => DiffMinimap.refresh(), 450);   // re-measure after images/fonts settle
+  }
+
   function renderAll() {
     if (isVisualPdf()) {
       PV.render(diffEl, state);
       scanNav();
       updateNav();
+      scheduleMinimap();
       return;
     }
     if (isVisualDoc()) {
       DV.render(diffEl, state);
       scanNav();
       updateNav();
+      scheduleMinimap();
       return;
     }
     if (isVisualNb()) {
       NV.render(diffEl, state);
       scanNav();
       updateNav();
+      scheduleMinimap();
       return;
     }
     if (isGrid()) {
@@ -416,6 +429,7 @@
     wireFolds();
     scanNav();
     updateNav();
+    scheduleMinimap();
     if (state.search) applySearchNow(state.search, true);
   }
 
@@ -432,6 +446,7 @@
     $("#pdfSeg").classList.toggle("hidden", !state.pdfVisual);
     $("#docSeg").classList.toggle("hidden", !state.docVisual);
     $("#docGranGroup").classList.toggle("hidden", !isVisualDoc());
+    $("#linkGroup").classList.toggle("hidden", isVisualPdf() || isVisualNb());
     $("#nbSeg").classList.toggle("hidden", !state.nbVisual);
     // In a visual view, line-oriented text controls don't apply — but
     // "Focus changes" does (it collapses to just the changed content).
@@ -455,6 +470,8 @@
       document.querySelectorAll("[data-docgran]").forEach(b =>
         b.classList.toggle("active", b.dataset.docgran === state.docGran));
     }
+    document.querySelectorAll("[data-link]").forEach(b =>
+      b.classList.toggle("active", b.dataset.link === state.linkMode));
     if (state.nbVisual) {
       document.querySelectorAll("[data-nbtab]").forEach(b =>
         b.classList.toggle("active", b.dataset.nbtab === state.nbMode));
@@ -675,7 +692,7 @@
     state.view = "split"; state.focus = false; state.gridMode = true;
     state.sheetA = null; state.sheetB = null;
     state.pdfVisual = false; state.pdfMode = "visual"; state.pdfData = null; state.ocrActive = false;
-    state.docVisual = false; state.docMode = "visual"; state.docData = null; state.docGran = "word";
+    state.docVisual = false; state.docMode = "visual"; state.docData = null; state.docGran = "word"; state.linkMode = "changes";
     state.nbVisual = false; state.nbMode = "visual"; state.nbData = null;
     state.forced = new Set();
     $("#searchInput").value = "";
@@ -689,6 +706,7 @@
     toolbarEl.classList.add("hidden");
     diffEl.classList.add("hidden");
     diffEl.innerHTML = "";
+    if (window.DiffMinimap) DiffMinimap.refresh();
     $("#resetBtn").classList.add("hidden");
     $("#compareBtn").disabled = true;
     clearErr();
@@ -764,6 +782,14 @@
         updateToolbarForMode();
         renderAll();
         updateStats();
+      });
+    });
+    // Hover-link scope toggle: changes-only vs all text
+    document.querySelectorAll("[data-link]").forEach(b => {
+      b.addEventListener("click", () => {
+        if (state.linkMode === b.dataset.link) return;
+        state.linkMode = b.dataset.link;
+        document.querySelectorAll("[data-link]").forEach(x => x.classList.toggle("active", x === b));
       });
     });
     // Word visual highlight granularity: per-word vs whole-sentence
@@ -855,7 +881,48 @@
     setupSlot("a");
     setupSlot("b");
     setupToolbar();
+    setupHoverLink();
+    if (window.DiffMinimap) DiffMinimap.mount(diffEl);
     $("#compareBtn").addEventListener("click", runCompare);
+  }
+
+  /* Hover a piece of one document → highlight the piece it maps to in the
+     other. "changes" mode links only changed pieces (data-chg / changed grid
+     cells); "all" mode also links unchanged text by block (data-map) and any
+     grid cell (data-gk). */
+  function setupHoverLink() {
+    let activeKey = null;
+    const clear = () => {
+      if (!activeKey) return;
+      diffEl.querySelectorAll(".peer-hl").forEach(el => el.classList.remove("peer-hl"));
+      activeKey = null;
+    };
+    const lite = (attr, v) => {
+      const key = attr + "=" + v;
+      if (key === activeKey) return true;
+      clear();
+      let matches;
+      try { matches = diffEl.querySelectorAll("[" + attr + '="' + (window.CSS && CSS.escape ? CSS.escape(v) : v) + '"]'); }
+      catch (_) { return true; }
+      matches.forEach(m => m.classList.add("peer-hl"));
+      activeKey = key;
+      return true;
+    };
+    diffEl.addEventListener("mouseover", (e) => {
+      const all = state.linkMode === "all";
+      // 1. fine change marks (Word / notebook), incl. reworded text
+      const chgEl = e.target.closest("[data-chg]");
+      if (chgEl) return void lite("data-chg", chgEl.getAttribute("data-chg"));
+      // 2. spreadsheet cell — in "changes" mode only changed cells map
+      const cell = e.target.closest("[data-gk]");
+      if (cell && (all || /gc-(add|del|mod)/.test(cell.className))) return void lite("data-gk", cell.getAttribute("data-gk"));
+      // 3. generic block / line mapping (Word paragraphs, code/HTML lines).
+      //    In "changes" mode only changed units (data-changed) map.
+      const blk = e.target.closest("[data-map]");
+      if (blk && (all || blk.hasAttribute("data-changed"))) return void lite("data-map", blk.getAttribute("data-map"));
+      clear();
+    });
+    diffEl.addEventListener("mouseleave", clear);
   }
 
   if (document.readyState === "loading") {

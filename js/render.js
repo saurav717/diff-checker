@@ -66,11 +66,12 @@
       rNo = row.right.no; rCls = "add-bg";
       rContent = esc(row.right.raw);
     }
+    const chgAttr = row.type === "eq" ? "" : ` data-changed="1"`;
     return `<div class="row split" data-i="${idx}" data-type="${row.type}">` +
       `<div class="ln left ${lCls}">${gut(lNo)}</div>` +
-      `<div class="cell left ${lCls}">${lContent || "&nbsp;"}</div>` +
+      `<div class="cell left ${lCls}" data-map="r${idx}"${chgAttr}>${lContent || "&nbsp;"}</div>` +
       `<div class="ln right ${rCls}">${gut(rNo)}</div>` +
-      `<div class="cell right ${rCls}">${rContent || "&nbsp;"}</div>` +
+      `<div class="cell right ${rCls}" data-map="r${idx}"${chgAttr}>${rContent || "&nbsp;"}</div>` +
       `</div>`;
   }
 
@@ -93,7 +94,8 @@
 
   function inlineLine(idx, type, lNo, rNo, sign, content, signCls) {
     const bg = signCls === "plus" ? "add-bg" : signCls === "minus" ? "del-bg" : "";
-    return `<div class="row inline" data-i="${idx}" data-type="${type}">` +
+    const chgAttr = type === "eq" ? "" : ` data-changed="1"`;
+    return `<div class="row inline" data-i="${idx}" data-type="${type}" data-map="r${idx}"${chgAttr}>` +
       `<div class="ln ${bg}">${gut(lNo)}</div>` +
       `<div class="sign ${signCls}">${sign}</div>` +
       `<div class="cell ${bg}">${content || "&nbsp;"}</div>` +

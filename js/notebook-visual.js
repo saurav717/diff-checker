@@ -20,6 +20,34 @@
     return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
+  // ---- syntax highlighting (highlight.js) ----
+  // Map our language ids to highlight.js ids.
+  const HLJS_LANG = { python: "python", py: "python", sql: "sql", scala: "scala",
+                      r: "r", bash: "bash", sh: "bash", shell: "bash", json: "json",
+                      javascript: "javascript", js: "javascript", java: "java", plaintext: null };
+
+  /* Return syntax-highlighted HTML for `source`, falling back to escaped text
+     when highlight.js (or the language) isn't available. Whitespace/newlines
+     are preserved verbatim, so the word-diff over the visible text is identical
+     to diffing the raw source. */
+  function highlightCode(source, lang) {
+    const src = source || "";
+    if (typeof hljs === "undefined") return esc(src);
+    const id = HLJS_LANG[(lang || "").toLowerCase()];
+    try {
+      if (id && hljs.getLanguage(id)) return hljs.highlight(src, { language: id, ignoreIllegals: true }).value;
+      return hljs.highlightAuto(src).value;   // unknown language → let hljs guess
+    } catch (_) { return esc(src); }
+  }
+
+  /* Highlight one or both code sources, then overlay the word-level diff marks
+     on the highlighted HTML (so colour + change highlights coexist). */
+  function markCodePair(aSource, bSource, lang, counter) {
+    const aHi = aSource != null ? highlightCode(aSource, lang) : "";
+    const bHi = bSource != null ? highlightCode(bSource, lang) : "";
+    return markHtmlPair(aHi, bHi, counter);
+  }
+
   // ---- word tokenisation + diff ----
   function tokenize(text) {
     const re = /\S+/g, t = []; let m;
@@ -202,7 +230,7 @@
         const mp = markHtmlPair(aCell.html, bCell.html, counter);
         aBody = mp.aHtml; bBody = mp.bHtml; del += mp.del; add += mp.add;
       } else {
-        const cp = markTextPair(aCell.source, bCell.source, counter);
+        const cp = markCodePair(aCell.source, bCell.source, bCell.lang || aCell.lang, counter);
         aBody = cp.aHtml; bBody = cp.bHtml; del += cp.del; add += cp.add;
       }
       const aOut = renderOutputs("a", aCell, bCell, counter, refs);
@@ -217,7 +245,7 @@
     if (aCell) { // removed cell
       const body = aCell.type === "markdown"
         ? markHtmlPair(aCell.html, "", counter).aHtml
-        : markTextPair(aCell.source, "", counter).aHtml;
+        : markCodePair(aCell.source, null, aCell.lang, counter).aHtml;
       const out = renderOutputs("a", aCell, null, counter, { del: 0, add: 0, counted: true, textPair: null });
       const toks = tokenize(aCell.source).length + tokenize((aCell.html || "").replace(/<[^>]+>/g, " ")).length;
       return { aHtml: cellHtml("a", aCell, body, out, true), bHtml: cellHtml("b", null), changed: true, del: Math.max(1, toks), add: 0 };
@@ -226,7 +254,7 @@
     // added cell
     const body = bCell.type === "markdown"
       ? markHtmlPair("", bCell.html, counter).bHtml
-      : markTextPair("", bCell.source, counter).bHtml;
+      : markCodePair(null, bCell.source, bCell.lang, counter).bHtml;
     const out = renderOutputs("b", bCell, null, counter, { del: 0, add: 0, counted: true, textPair: null });
     const toks = tokenize(bCell.source).length + tokenize((bCell.html || "").replace(/<[^>]+>/g, " ")).length;
     return { aHtml: cellHtml("a", null), bHtml: cellHtml("b", bCell, body, out, true), changed: true, del: 0, add: Math.max(1, toks) };

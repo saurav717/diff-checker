@@ -193,6 +193,7 @@
     assignSentences(B.tokens);
 
     const aMarks = new Map(), bMarks = new Map();
+    const pairCount = new Map();   // aBlock -> Map(bBlock -> shared-token count)
     let del = 0, add = 0, chg = 0;
 
     if (typeof Diff !== "undefined") {
@@ -204,7 +205,18 @@
         if (isChange && !prevChange) chg++;
         if (part.removed) { for (let k = 0; k < n; k++) aMarks.set(ai + k, chg); ai += n; del += n; }
         else if (part.added) { for (let k = 0; k < n; k++) bMarks.set(bi + k, chg); bi += n; add += n; }
-        else { ai += n; bi += n; }
+        else {
+          // equal run: corresponding tokens map their blocks A↔B
+          for (let k = 0; k < n; k++) {
+            const ab = A.tokens[ai + k].block, bb = B.tokens[bi + k].block;
+            if (ab && bb) {
+              if (!pairCount.has(ab)) pairCount.set(ab, new Map());
+              const m = pairCount.get(ab);
+              m.set(bb, (m.get(bb) || 0) + 1);
+            }
+          }
+          ai += n; bi += n;
+        }
         prevChange = isChange;
       }
     }
@@ -216,6 +228,26 @@
 
     applyMarks(A.tokens, aMarks, "del", sentence);
     applyMarks(B.tokens, bMarks, "add", sentence);
+
+    // Assign a shared map id to each A block and its best-matching B block, so
+    // hovering ANY text (changed or not) can highlight its mapped counterpart.
+    let mid = 0;
+    const usedB = new Set(), seenA = new Set();
+    for (const t of A.tokens) {
+      const ab = t.block;
+      if (!ab || seenA.has(ab)) continue;
+      seenA.add(ab);
+      const cands = pairCount.get(ab);
+      if (!cands) continue;
+      let best = null, bestN = 0;
+      for (const [bb, c] of cands) { if (!usedB.has(bb) && c > bestN) { best = bb; bestN = c; } }
+      if (best) {
+        const id = "m" + (mid++);
+        ab.setAttribute("data-map", id);
+        best.setAttribute("data-map", id);
+        usedB.add(best);
+      }
+    }
 
     return {
       htmlA: A.root.innerHTML,

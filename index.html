@@ -12,7 +12,7 @@
      Carlito≈Calibri, Tinos≈Times New Roman, Arimo≈Arial,
      Caladea≈Cambria, Cousine≈Courier New/Consolas, EB Garamond≈Garamond -->
 <link href="https://fonts.googleapis.com/css2?family=Arimo:ital,wght@0,400;0,700;1,400;1,700&family=Caladea:ital,wght@0,400;0,700;1,400;1,700&family=Carlito:ital,wght@0,400;0,700;1,400;1,700&family=Cousine:ital,wght@0,400;0,700;1,400;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=8">
+<link rel="stylesheet" href="styles.css?v=13">
 
 <!-- Parsing + diff libraries -->
 <script src="https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.min.js"></script>
@@ -252,6 +252,14 @@
       </div>
     </div>
 
+    <div class="tb-group hidden" id="linkGroup">
+      <span class="tb-label">Hover&#8209;link</span>
+      <div class="segment">
+        <button data-link="changes" class="active">Changes</button>
+        <button data-link="all">All text</button>
+      </div>
+    </div>
+
     <div class="tb-spacer"></div>
 
     <div class="tb-group" id="searchGroup">
@@ -299,15 +307,22 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="js/parsers.js?v=8"></script>
-<script src="js/ocr.js?v=8"></script>
-<script src="js/diff-engine.js?v=8"></script>
-<script src="js/grid-diff.js?v=8"></script>
-<script src="js/pdf-visual.js?v=8"></script>
-<script src="js/docx-visual.js?v=8"></script>
-<script src="js/notebook-visual.js?v=8"></script>
-<script src="js/render.js?v=8"></script>
-<script src="js/render-grid.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<!-- highlight.js — syntax highlighting for notebook code cells (common bundle
+     covers python/sql/bash/json/scala/js…; r added separately) -->
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/r.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/scala.min.js"></script>
+
+<script src="js/parsers.js?v=13"></script>
+<script src="js/ocr.js?v=13"></script>
+<script src="js/diff-engine.js?v=13"></script>
+<script src="js/grid-diff.js?v=13"></script>
+<script src="js/pdf-visual.js?v=13"></script>
+<script src="js/docx-visual.js?v=13"></script>
+<script src="js/notebook-visual.js?v=13"></script>
+<script src="js/render.js?v=13"></script>
+<script src="js/render-grid.js?v=13"></script>
+<script src="js/minimap.js?v=13"></script>
+<script src="js/app.js?v=13"></script>
 </body>
 </html>
