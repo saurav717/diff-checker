@@ -287,7 +287,7 @@
     }
 
     if (isVisualNb()) {
-      if (!state.nbData) state.nbData = NV.build(state.a, state.b);
+      if (!state.nbData) state.nbData = NV.build(state.a, state.b, state.docGran);
       updateToolbarForMode();
       renderAll();
       updateStats();
@@ -445,8 +445,8 @@
     if (state.tabular) populateSheetSelectors();
     $("#pdfSeg").classList.toggle("hidden", !state.pdfVisual);
     $("#docSeg").classList.toggle("hidden", !state.docVisual);
-    $("#docGranGroup").classList.toggle("hidden", !isVisualDoc());
-    $("#linkGroup").classList.toggle("hidden", isVisualPdf() || isVisualNb());
+    $("#docGranGroup").classList.toggle("hidden", !(isVisualDoc() || isVisualNb()));
+    $("#linkGroup").classList.toggle("hidden", isVisualPdf());
     $("#nbSeg").classList.toggle("hidden", !state.nbVisual);
     // In a visual view, line-oriented text controls don't apply — but
     // "Focus changes" does (it collapses to just the changed content).
@@ -467,9 +467,9 @@
     if (state.docVisual) {
       document.querySelectorAll("[data-doctab]").forEach(b =>
         b.classList.toggle("active", b.dataset.doctab === state.docMode));
-      document.querySelectorAll("[data-docgran]").forEach(b =>
-        b.classList.toggle("active", b.dataset.docgran === state.docGran));
     }
+    document.querySelectorAll("[data-docgran]").forEach(b =>
+      b.classList.toggle("active", b.dataset.docgran === state.docGran));
     document.querySelectorAll("[data-link]").forEach(b =>
       b.classList.toggle("active", b.dataset.link === state.linkMode));
     if (state.nbVisual) {
@@ -792,13 +792,19 @@
         document.querySelectorAll("[data-link]").forEach(x => x.classList.toggle("active", x === b));
       });
     });
-    // Word visual highlight granularity: per-word vs whole-sentence
+    // Highlight granularity: per-word vs whole-sentence (Word docs & notebooks)
     document.querySelectorAll("[data-docgran]").forEach(b => {
       b.addEventListener("click", () => {
         if (state.docGran === b.dataset.docgran) return;
         state.docGran = b.dataset.docgran;
         state.currentHunk = -1;
         document.querySelectorAll("[data-docgran]").forEach(x => x.classList.toggle("active", x === b));
+        if (isVisualNb()) {
+          state.nbData = NV.build(state.a, state.b, state.docGran);
+          renderAll();
+          updateStats();
+          return;
+        }
         showLoading(true, "Updating highlights…");
         DV.build(state.a, state.b, state.docGran).then(d => {
           state.docData = d;

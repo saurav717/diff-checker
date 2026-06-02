@@ -20,6 +20,34 @@
     return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
+  // Highlight granularity: "word" (default) or "sentence" (extend a change to
+  // the whole sentence / line that contains it). Set per build().
+  let gran = "word";
+
+  /* Segment id per token: a new segment begins after a newline in the gap
+     between tokens, or after a token ending in sentence punctuation. So in
+     prose a unit is a sentence; in code it is effectively a line. */
+  function segIds(text, toks) {
+    const ids = []; let s = 0;
+    for (let i = 0; i < toks.length; i++) {
+      if (i > 0) {
+        const gap = text.slice(toks[i - 1].end, toks[i].start);
+        const prevWord = toks[i - 1].s != null ? toks[i - 1].s : toks[i - 1].word;
+        if (gap.indexOf("\n") >= 0 || /[.!?:][)"'\]]?$/.test(prevWord)) s++;
+      }
+      ids.push(s);
+    }
+    return ids;
+  }
+  /* Sentence mode: extend a per-token change map to cover every token of any
+     segment that contains a change. */
+  function expandToSeg(markMap, ids) {
+    if (gran !== "sentence" || !markMap.size) return;
+    const seg = new Map();
+    for (const [i, v] of markMap) if (!seg.has(ids[i])) seg.set(ids[i], v);
+    for (let i = 0; i < ids.length; i++) if (seg.has(ids[i])) markMap.set(i, seg.get(ids[i]));
+  }
+
   // ---- syntax highlighting (highlight.js) ----
   // Map our language ids to highlight.js ids.
   const HLJS_LANG = { python: "python", py: "python", sql: "sql", scala: "scala",
@@ -71,6 +99,8 @@
         prev = chg;
       }
     }
+    expandToSeg(aMark, segIds(aText || "", at));
+    expandToSeg(bMark, segIds(bText || "", bt));
     return { at, bt, aMark, bMark, del, add };
   }
 
@@ -153,6 +183,13 @@
         prev = chg;
       }
     }
+    // Sentence mode: expand using segment ids derived from the plain text
+    // (token order matches the node tokens 1:1).
+    if (gran === "sentence") {
+      const aText = A.root.textContent || "", bText = B.root.textContent || "";
+      expandToSeg(aMark, segIds(aText, tokenize(aText)));
+      expandToSeg(bMark, segIds(bText, tokenize(bText)));
+    }
     applyHtmlMarks(A.tokens, aMark, "del");
     applyHtmlMarks(B.tokens, bMark, "add");
     return { aHtml: A.root.innerHTML, bHtml: B.root.innerHTML, del, add };
@@ -204,14 +241,15 @@
   }
 
   // ---- one cell's rendered HTML for a given side ----
-  function cellHtml(side, cell, body, outputsHtml, lone) {
-    if (!cell) return `<div class="nb-cell nb-empty"><span>no matching cell</span></div>`;
+  function cellHtml(side, cell, body, outputsHtml, lone, mapId) {
+    const mapAttr = mapId != null ? ` data-map="nb${mapId}"` : "";
+    if (!cell) return `<div class="nb-cell nb-empty"${mapAttr}><span>no matching cell</span></div>`;
     const loneCls = lone ? (side === "a" ? " nb-lone-del" : " nb-lone-add") : "";
     const title = cell.title ? `<div class="nb-celltitle">${esc(cell.title)}</div>` : "";
     if (cell.type === "markdown") {
-      return `<div class="nb-cell nb-md${loneCls}">${title}${body}</div>`;
+      return `<div class="nb-cell nb-md${loneCls}"${mapAttr}>${title}${body}</div>`;
     }
-    return `<div class="nb-cell nb-code${loneCls}">` +
+    return `<div class="nb-cell nb-code${loneCls}"${mapAttr}>` +
       title +
       `<div class="nb-codewrap-outer">` +
       `<div class="nb-prompt">${side === "a" ? "[ ]" : "[ ]"}</div>` +
@@ -221,7 +259,7 @@
   }
 
   // Build full A/B HTML for a paired (or lone) row.
-  function buildRow(aCell, bCell, counter) {
+  function buildRow(aCell, bCell, counter, mapId) {
     let aBody = "", bBody = "", del = 0, add = 0;
     const refs = { del: 0, add: 0, counted: false, textPair: null };
 
@@ -236,8 +274,8 @@
       const aOut = renderOutputs("a", aCell, bCell, counter, refs);
       const bOut = renderOutputs("b", bCell, aCell, counter, refs);
       del += refs.del; add += refs.add;
-      const aHtml = cellHtml("a", aCell, aBody, aOut, false);
-      const bHtml = cellHtml("b", bCell, bBody, bOut, false);
+      const aHtml = cellHtml("a", aCell, aBody, aOut, false, mapId);
+      const bHtml = cellHtml("b", bCell, bBody, bOut, false, mapId);
       const changed = del + add > 0;
       return { aHtml, bHtml, changed, del, add };
     }
@@ -248,7 +286,7 @@
         : markCodePair(aCell.source, null, aCell.lang, counter).aHtml;
       const out = renderOutputs("a", aCell, null, counter, { del: 0, add: 0, counted: true, textPair: null });
       const toks = tokenize(aCell.source).length + tokenize((aCell.html || "").replace(/<[^>]+>/g, " ")).length;
-      return { aHtml: cellHtml("a", aCell, body, out, true), bHtml: cellHtml("b", null), changed: true, del: Math.max(1, toks), add: 0 };
+      return { aHtml: cellHtml("a", aCell, body, out, true, mapId), bHtml: cellHtml("b", null, "", "", false, mapId), changed: true, del: Math.max(1, toks), add: 0 };
     }
 
     // added cell
@@ -257,7 +295,7 @@
       : markCodePair(null, bCell.source, bCell.lang, counter).bHtml;
     const out = renderOutputs("b", bCell, null, counter, { del: 0, add: 0, counted: true, textPair: null });
     const toks = tokenize(bCell.source).length + tokenize((bCell.html || "").replace(/<[^>]+>/g, " ")).length;
-    return { aHtml: cellHtml("a", null), bHtml: cellHtml("b", bCell, body, out, true), changed: true, del: 0, add: Math.max(1, toks) };
+    return { aHtml: cellHtml("a", null, "", "", false, mapId), bHtml: cellHtml("b", bCell, body, out, true, mapId), changed: true, del: 0, add: Math.max(1, toks) };
   }
 
   function sig(cell) {
@@ -272,16 +310,19 @@
     return (cell._sig = cell.type + "\u0000" + base);
   }
 
-  function build(a, b) {
+  function build(a, b, granularity) {
+    gran = granularity === "sentence" ? "sentence" : "word";
     const ac = a.nbCells || [], bc = b.nbCells || [];
     const counter = { n: 0 };
+    const rid = { n: 0 };               // shared map id per row (hover-link)
     const rows = [];
     let del = 0, add = 0;
+    const row = (ax, bx) => rows.push(buildRow(ax, bx, counter, ++rid.n));
 
     if (typeof Diff === "undefined") {
       // no diff lib — just show both, no highlights
       const n = Math.max(ac.length, bc.length);
-      for (let i = 0; i < n; i++) rows.push(buildRow(ac[i] || null, bc[i] || null, counter));
+      for (let i = 0; i < n; i++) row(ac[i] || null, bc[i] || null);
     } else {
       const parts = Diff.diffArrays(ac.map(sig), bc.map(sig));
       let ai = 0, bi = 0, i = 0;
@@ -289,19 +330,19 @@
         const part = parts[i];
         const n = part.value.length;
         if (!part.added && !part.removed) {
-          for (let k = 0; k < n; k++) rows.push(buildRow(ac[ai + k], bc[bi + k], counter));
+          for (let k = 0; k < n; k++) row(ac[ai + k], bc[bi + k]);
           ai += n; bi += n; i++;
         } else if (part.removed && parts[i + 1] && parts[i + 1].added) {
           const rem = n, addn = parts[i + 1].value.length, m = Math.min(rem, addn);
-          for (let k = 0; k < m; k++) rows.push(buildRow(ac[ai + k], bc[bi + k], counter));
-          for (let k = m; k < rem; k++) rows.push(buildRow(ac[ai + k], null, counter));
-          for (let k = m; k < addn; k++) rows.push(buildRow(null, bc[bi + k], counter));
+          for (let k = 0; k < m; k++) row(ac[ai + k], bc[bi + k]);
+          for (let k = m; k < rem; k++) row(ac[ai + k], null);
+          for (let k = m; k < addn; k++) row(null, bc[bi + k]);
           ai += rem; bi += addn; i += 2;
         } else if (part.removed) {
-          for (let k = 0; k < n; k++) rows.push(buildRow(ac[ai + k], null, counter));
+          for (let k = 0; k < n; k++) row(ac[ai + k], null);
           ai += n; i++;
         } else {
-          for (let k = 0; k < n; k++) rows.push(buildRow(null, bc[bi + k], counter));
+          for (let k = 0; k < n; k++) row(null, bc[bi + k]);
           bi += n; i++;
         }
       }
