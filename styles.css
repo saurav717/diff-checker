@@ -1162,11 +1162,48 @@ mark.dv-mark.change-target { box-shadow: 0 0 0 2px var(--accent); }
 }
 .nb-out-rich {
   border-radius: 6px;
+  /* scroll the table in BOTH directions instead of letting it squeeze */
   overflow: auto;
+  max-height: 460px;
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 .nb-out-rich img { max-width: 100%; height: auto; display: block; border-radius: 4px; }
-.nb-out-rich table { border-collapse: collapse; font-size: 12px; font-family: var(--mono); }
-.nb-out-rich td, .nb-out-rich th { border: 1px solid var(--border-strong); padding: 3px 8px; }
+.nb-out-rich table {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: var(--mono);
+  /* size to content so the cells keep their natural width and the
+     container scrolls, rather than the table collapsing to min-content */
+  width: max-content;
+  max-width: none;
+}
+.nb-out-rich td, .nb-out-rich th {
+  border: 1px solid var(--border-strong);
+  padding: 3px 8px;
+  /* override the .nb-cell wrapping that was breaking headers one char per line */
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  text-align: right;
+  vertical-align: top;
+}
+/* sticky column headers so they stay visible while scrolling down */
+.nb-out-rich thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+  text-align: center;
+}
+/* sticky row-index labels (pandas renders these as <th> in tbody) */
+.nb-out-rich tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  text-align: right;
+}
 .nb-out-changed { outline: 2px solid; outline-offset: 2px; }
 .nb-out-rich.dv-del { outline-color: var(--del-sign); }
 .nb-out-rich.dv-add { outline-color: var(--add-sign); }
