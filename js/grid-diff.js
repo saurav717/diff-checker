@@ -67,8 +67,84 @@
       return cols;
     }
     // positional fallback (no usable headers)
+    return positionalCols(nA, nB);
+  }
+
+  function positionalCols(nA, nB) {
     const n = Math.max(nA, nB), cols = [];
     for (let i = 0; i < n; i++) cols.push({ aIdx: i < nA ? i : null, bIdx: i < nB ? i : null, status: "same", name: null });
+    return cols;
+  }
+
+  /* ---- content-based column alignment (no usable headers) ----
+     Identify a column by the (order-independent) multiset of values down it,
+     so a column that was moved to a new position is recognised as the SAME
+     column rather than showing up as a wall of cell edits. Only overrides the
+     positional layout when it confidently explains a real reordering; otherwise
+     it returns the positional columns so unrelated data still degrades to a
+     plain cell-level diff. */
+  const COL_MATCH = 0.7;            // min Dice overlap to call two columns "the same"
+  function columnValues(data, idx, iw) {
+    const out = [];
+    for (const r of data) { const v = norm(r[idx], iw); if (v !== "") out.push(v); }
+    return out;
+  }
+  function multisetDice(a, b) {
+    if (!a.length || !b.length) return 0;            // need real content on both sides
+    const counts = new Map();
+    for (const v of a) counts.set(v, (counts.get(v) || 0) + 1);
+    let inter = 0;
+    for (const v of b) { const c = counts.get(v) || 0; if (c > 0) { inter++; counts.set(v, c - 1); } }
+    return (2 * inter) / (a.length + b.length);
+  }
+  function alignColumnsByContent(dataA, dataB, nA, nB, iw) {
+    const positional = positionalCols(nA, nB);
+    if (typeof Diff === "undefined") return positional;
+    if (nA * nB > 4096 || nA === 0 || nB === 0) return positional;   // keep it cheap; nothing to match
+
+    const sigA = [], sigB = [];
+    for (let i = 0; i < nA; i++) sigA.push(columnValues(dataA, i, iw));
+    for (let j = 0; j < nB; j++) sigB.push(columnValues(dataB, j, iw));
+
+    // greedy best-similarity one-to-one matching of A↔B columns
+    const cand = [];
+    for (let i = 0; i < nA; i++) for (let j = 0; j < nB; j++) {
+      const s = multisetDice(sigA[i], sigB[j]);
+      if (s >= COL_MATCH) cand.push({ i, j, s });
+    }
+    cand.sort((x, y) => y.s - x.s);
+    const aUsed = new Array(nA).fill(false), bUsed = new Array(nB).fill(false);
+    const matchA = new Array(nB).fill(-1);           // B col j → A col i (or -1)
+    for (const p of cand) { if (aUsed[p.i] || bUsed[p.j]) continue; aUsed[p.i] = true; bUsed[p.j] = true; matchA[p.j] = p.i; }
+    // positional mop-up: pair any leftover columns that still sit at the same index
+    for (let k = 0; k < Math.min(nA, nB); k++) if (!aUsed[k] && !bUsed[k]) { aUsed[k] = true; bUsed[k] = true; matchA[k] = k; }
+
+    // same vs moved: longest increasing run of A-positions taken in B order stays put
+    const seqJ = [], seqA = [];
+    for (let j = 0; j < nB; j++) if (matchA[j] >= 0) { seqJ.push(j); seqA.push(matchA[j]); }
+    const keep = lisMask(seqA);
+    const inPlace = new Map();
+    seqJ.forEach((j, k) => inPlace.set(j, keep[k]));
+    let movedAny = false; inPlace.forEach(v => { if (!v) movedAny = true; });
+
+    // only trust content alignment when it actually found a reordering AND it
+    // explains most of the columns — otherwise the positional diff is safer.
+    const matched = seqJ.length;
+    if (!movedAny || matched < Math.max(2, Math.min(nA, nB) * 0.7)) return positional;
+
+    const cols = [];
+    for (let j = 0; j < nB; j++) {
+      const i = matchA[j];
+      if (i >= 0) cols.push({ aIdx: i, bIdx: j, status: inPlace.get(j) ? "same" : "moved", name: null, fromName: inPlace.get(j) ? undefined : colName(i) });
+      else cols.push({ aIdx: null, bIdx: j, status: "added", name: null });
+    }
+    // slot removed A columns back in next to where they used to sit
+    for (let i = 0; i < nA; i++) {
+      if (aUsed[i]) continue;
+      let pos = 0;
+      for (let k = 0; k < cols.length; k++) if (cols[k].aIdx != null && cols[k].aIdx < i) pos = k + 1;
+      cols.splice(pos, 0, { aIdx: i, bIdx: null, status: "removed", name: null });
+    }
     return cols;
   }
 
@@ -254,7 +330,9 @@
     const dataB = useHeaders ? gB.slice(1) : gB;
     const baseA = useHeaders ? 2 : 1, baseB = useHeaders ? 2 : 1;     // spreadsheet row numbers
 
-    const cols = alignColumns(headerA, headerB, maxCols(gA), maxCols(gB));
+    const cols = useHeaders
+      ? alignColumns(headerA, headerB, maxCols(gA), maxCols(gB))
+      : alignColumnsByContent(dataA, dataB, maxCols(dataA), maxCols(dataB), iw);
     const key = detectKey(dataA, dataB, cols, iw);
     const rows = alignRows(dataA, dataB, cols, key, iw, baseA, baseB);
 
