@@ -241,15 +241,29 @@
   }
 
   // ---- one cell's rendered HTML for a given side ----
-  function cellHtml(side, cell, body, outputsHtml, lone, mapId) {
+  // `move` (optional): { role:'from'|'to', partnerRow, id } marks this cell as
+  // a relocated block — it gets the move accent, a badge linking to where it
+  // came from / went to, and a shared data-chg so hovering links both halves.
+  function cellHtml(side, cell, body, outputsHtml, lone, mapId, move) {
     const mapAttr = mapId != null ? ` data-map="nb${mapId}"` : "";
     if (!cell) return `<div class="nb-cell nb-empty"${mapAttr}><span>no matching cell</span></div>`;
     const loneCls = lone ? (side === "a" ? " nb-lone-del" : " nb-lone-add") : "";
+    let moveCls = "", moveAttr = "", badge = "";
+    if (move) {
+      moveCls = " nb-moved nb-moved-" + move.role;
+      moveAttr = ` data-chg="mv${move.id}"`;
+      const arrow = move.role === "from" ? "\u2193" : "\u2191";
+      const label = move.role === "from"
+        ? `Moved to cell ${move.partnerRow}`
+        : `Moved from cell ${move.partnerRow}`;
+      badge = `<div class="nb-movebadge"><span class="nb-move-ic">\u21c5</span>${esc(label)} <span class="nb-move-arrow">${arrow}</span></div>`;
+    }
     const title = cell.title ? `<div class="nb-celltitle">${esc(cell.title)}</div>` : "";
     if (cell.type === "markdown") {
-      return `<div class="nb-cell nb-md${loneCls}"${mapAttr}>${title}${body}</div>`;
+      return `<div class="nb-cell nb-md${loneCls}${moveCls}"${mapAttr}${moveAttr}>${badge}${title}${body}</div>`;
     }
-    return `<div class="nb-cell nb-code${loneCls}"${mapAttr}>` +
+    return `<div class="nb-cell nb-code${loneCls}${moveCls}"${mapAttr}${moveAttr}>` +
+      badge +
       title +
       `<div class="nb-codewrap-outer">` +
       `<div class="nb-prompt">${side === "a" ? "[ ]" : "[ ]"}</div>` +
@@ -258,26 +272,44 @@
     `</div>`;
   }
 
-  // Build full A/B HTML for a paired (or lone) row.
-  function buildRow(aCell, bCell, counter, mapId) {
+  // Placeholder shown on the opposite column from a moved cell, pointing at the
+  // cell's other location so the relocation reads clearly on both sides.
+  function moveStub(role, partnerRow, moveId) {
+    const arrow = role === "to" ? "\u2193" : "\u2191";
+    const label = role === "to"
+      ? `moved down to cell ${partnerRow}`
+      : `moved up from cell ${partnerRow}`;
+    return `<div class="nb-cell nb-movestub" data-chg="mv${moveId}">` +
+      `<span class="nb-move-ic">\u21c5</span><span>${esc(label)}</span>` +
+      `<span class="nb-move-arrow">${arrow}</span></div>`;
+  }
+
+  // Compute the diffed A/B body + outputs for a matched pair, sharing one
+  // change counter so the marks on both sides carry identical data-chg ids.
+  function pairBodies(aCell, bCell, counter) {
     let aBody = "", bBody = "", del = 0, add = 0;
     const refs = { del: 0, add: 0, counted: false, textPair: null };
+    if (aCell.type === "markdown" && bCell.type === "markdown") {
+      const mp = markHtmlPair(aCell.html, bCell.html, counter);
+      aBody = mp.aHtml; bBody = mp.bHtml; del += mp.del; add += mp.add;
+    } else {
+      const cp = markCodePair(aCell.source, bCell.source, bCell.lang || aCell.lang, counter);
+      aBody = cp.aHtml; bBody = cp.bHtml; del += cp.del; add += cp.add;
+    }
+    const aOut = renderOutputs("a", aCell, bCell, counter, refs);
+    const bOut = renderOutputs("b", bCell, aCell, counter, refs);
+    del += refs.del; add += refs.add;
+    return { aBody, bBody, aOut, bOut, del, add };
+  }
 
+  // Build full A/B HTML for a paired (or lone) row.
+  function buildRow(aCell, bCell, counter, mapId) {
     if (aCell && bCell) {
-      if (aCell.type === "markdown" && bCell.type === "markdown") {
-        const mp = markHtmlPair(aCell.html, bCell.html, counter);
-        aBody = mp.aHtml; bBody = mp.bHtml; del += mp.del; add += mp.add;
-      } else {
-        const cp = markCodePair(aCell.source, bCell.source, bCell.lang || aCell.lang, counter);
-        aBody = cp.aHtml; bBody = cp.bHtml; del += cp.del; add += cp.add;
-      }
-      const aOut = renderOutputs("a", aCell, bCell, counter, refs);
-      const bOut = renderOutputs("b", bCell, aCell, counter, refs);
-      del += refs.del; add += refs.add;
-      const aHtml = cellHtml("a", aCell, aBody, aOut, false, mapId);
-      const bHtml = cellHtml("b", bCell, bBody, bOut, false, mapId);
-      const changed = del + add > 0;
-      return { aHtml, bHtml, changed, del, add };
+      const pb = pairBodies(aCell, bCell, counter);
+      const aHtml = cellHtml("a", aCell, pb.aBody, pb.aOut, false, mapId);
+      const bHtml = cellHtml("b", bCell, pb.bBody, pb.bOut, false, mapId);
+      const changed = pb.del + pb.add > 0;
+      return { aHtml, bHtml, changed, del: pb.del, add: pb.add };
     }
 
     if (aCell) { // removed cell
@@ -310,19 +342,89 @@
     return (cell._sig = cell.type + "\u0000" + base);
   }
 
+  // ---- move (relocated cell/block) detection ----
+  // Comparable plain text for similarity scoring (markdown -> rendered text).
+  function cmpText(cell) {
+    if (cell.type === "markdown") {
+      const d = document.createElement("div"); d.innerHTML = cell.html || "";
+      return (d.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    return (cell.source || "").replace(/\s+/g, " ").trim();
+  }
+  // Token Dice coefficient: 2*common / (lenA+lenB). 1 = identical content.
+  function similarity(aCell, bCell) {
+    if (!aCell || !bCell || aCell.type !== bCell.type) return 0;
+    const a = cmpText(aCell), b = cmpText(bCell);
+    if (a === b) return 1;
+    if (typeof Diff === "undefined") return 0;
+    const at = a ? a.split(/\s+/) : [], bt = b ? b.split(/\s+/) : [];
+    const denom = at.length + bt.length;
+    if (!denom) return 1;
+    let common = 0;
+    for (const p of Diff.diffArrays(at, bt)) if (!p.added && !p.removed) common += p.value.length;
+    return (2 * common) / denom;
+  }
+  /* Reconnect unpaired removed (A-only) and added (B-only) ops that are really
+     the same block relocated up or down. A pairing counts as a MOVE only when
+     the two ops land more than one row apart — adjacent near-matches stay plain
+     add/remove so ordinary in-place edits are untouched. Most-similar pairs win,
+     ties broken by proximity; each cell is matched at most once. Mutates ops
+     (attaches .move) and returns the number of moves found. */
+  function detectMoves(ops) {
+    if (typeof Diff === "undefined") return 0;
+    const dels = [], adds = [];
+    ops.forEach((op, i) => {
+      if (op.a && !op.b) dels.push({ op, i });
+      else if (!op.a && op.b) adds.push({ op, i });
+    });
+    if (!dels.length || !adds.length) return 0;
+    const THRESH = 0.5;            // min similarity to treat as the same block
+    const cands = [];
+    for (const d of dels) for (const a of adds) {
+      const dist = Math.abs(d.i - a.i);
+      if (dist < 2) continue;      // adjacent -> ordinary edit, not a relocation
+      const s = similarity(d.op.a, a.op.b);
+      if (s >= THRESH) cands.push({ d, a, s, dist });
+    }
+    cands.sort((x, y) => (y.s - x.s) || (x.dist - y.dist));
+    const usedD = new Set(), usedA = new Set();
+    let moves = 0, id = 0;
+    for (const c of cands) {
+      if (usedD.has(c.d.op) || usedA.has(c.a.op)) continue;
+      usedD.add(c.d.op); usedA.add(c.a.op);
+      id++;
+      c.d.op.move = { role: "from", partner: c.a.op, id };
+      c.a.op.move = { role: "to", partner: c.d.op, id };
+      moves++;
+    }
+    return moves;
+  }
+  /* Build the two rows for a relocated cell. The A side keeps the content with
+     a "moved to" badge (opposite a stub pointing forward); the B side shows the
+     content with a "moved from" badge (opposite a stub pointing back). Any
+     within-cell text/output edits are still diffed and counted; the relocation
+     itself is reported via the `moved` stat, not as add/remove churn. */
+  function buildMoveRows(delOp, addOp, counter) {
+    const aCell = delOp.a, bCell = addOp.b;
+    const pb = pairBodies(aCell, bCell, counter);
+    const id = delOp.move.id;
+    const aHtml = cellHtml("a", aCell, pb.aBody, pb.aOut, false, null, { role: "from", partnerRow: addOp.row, id });
+    const bHtml = cellHtml("b", bCell, pb.bBody, pb.bOut, false, null, { role: "to", partnerRow: delOp.row, id });
+    const fromRow = { aHtml, bHtml: moveStub("to", addOp.row, id), changed: true, del: pb.del, add: pb.add, moved: true, moveId: id };
+    const toRow = { aHtml: moveStub("from", delOp.row, id), bHtml, changed: true, del: 0, add: 0, moved: true, moveId: id };
+    return { fromRow, toRow };
+  }
+
   function build(a, b, granularity) {
     gran = granularity === "sentence" ? "sentence" : "word";
     const ac = a.nbCells || [], bc = b.nbCells || [];
     const counter = { n: 0 };
-    const rid = { n: 0 };               // shared map id per row (hover-link)
-    const rows = [];
-    let del = 0, add = 0;
-    const row = (ax, bx) => rows.push(buildRow(ax, bx, counter, ++rid.n));
 
+    // 1. Alignment pass -> ordered list of ops { a, b } (either may be null).
+    const ops = [];
     if (typeof Diff === "undefined") {
-      // no diff lib — just show both, no highlights
       const n = Math.max(ac.length, bc.length);
-      for (let i = 0; i < n; i++) row(ac[i] || null, bc[i] || null);
+      for (let i = 0; i < n; i++) ops.push({ a: ac[i] || null, b: bc[i] || null });
     } else {
       const parts = Diff.diffArrays(ac.map(sig), bc.map(sig));
       let ai = 0, bi = 0, i = 0;
@@ -330,26 +432,43 @@
         const part = parts[i];
         const n = part.value.length;
         if (!part.added && !part.removed) {
-          for (let k = 0; k < n; k++) row(ac[ai + k], bc[bi + k]);
+          for (let k = 0; k < n; k++) ops.push({ a: ac[ai + k], b: bc[bi + k] });
           ai += n; bi += n; i++;
         } else if (part.removed && parts[i + 1] && parts[i + 1].added) {
           const rem = n, addn = parts[i + 1].value.length, m = Math.min(rem, addn);
-          for (let k = 0; k < m; k++) row(ac[ai + k], bc[bi + k]);
-          for (let k = m; k < rem; k++) row(ac[ai + k], null);
-          for (let k = m; k < addn; k++) row(null, bc[bi + k]);
+          for (let k = 0; k < m; k++) ops.push({ a: ac[ai + k], b: bc[bi + k] });
+          for (let k = m; k < rem; k++) ops.push({ a: ac[ai + k], b: null });
+          for (let k = m; k < addn; k++) ops.push({ a: null, b: bc[bi + k] });
           ai += rem; bi += addn; i += 2;
         } else if (part.removed) {
-          for (let k = 0; k < n; k++) row(ac[ai + k], null);
+          for (let k = 0; k < n; k++) ops.push({ a: ac[ai + k], b: null });
           ai += n; i++;
         } else {
-          for (let k = 0; k < n; k++) row(null, bc[bi + k]);
+          for (let k = 0; k < n; k++) ops.push({ a: null, b: bc[bi + k] });
           bi += n; i++;
         }
       }
     }
 
+    // 2. Reconnect relocated blocks among the unpaired add/remove ops.
+    const moved = detectMoves(ops);
+
+    // 3. Number rows (one per op, in order) so move badges can reference the
+    //    partner's row, then materialise each row.
+    ops.forEach((op, i) => { op.row = i + 1; });
+    for (const op of ops) {
+      if (op.move && op.move.role === "from") {
+        const built = buildMoveRows(op, op.move.partner, counter);
+        op.rowObj = built.fromRow;
+        op.move.partner.rowObj = built.toRow;
+      }
+    }
+    const rid = { n: 0 };
+    const rows = ops.map(op => op.rowObj || buildRow(op.a, op.b, counter, ++rid.n));
+
+    let del = 0, add = 0;
     rows.forEach(r => { del += r.del; add += r.add; });
-    return { rows, stats: { add, del }, changes: counter.n };
+    return { rows, stats: { add, del, moved }, changes: counter.n };
   }
 
   function render(container, state) {
@@ -362,14 +481,14 @@
       `<div class="nb-h"><span class="nb-badge b">B</span><span class="nb-hname">${esc(state.b.name)}</span><span class="nb-htag add">added</span></div>` +
       `</div>`;
 
-    if (data.stats.add + data.stats.del === 0) {
+    if (data.stats.add + data.stats.del + (data.stats.moved || 0) === 0) {
       html += `<div class="nb-identical"><div class="nb-id-ic">` +
         `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 6L9 17l-5-5"/></svg>` +
         `</div><h2>The notebooks look identical</h2><p>No differences detected across ${data.rows.length} cell${data.rows.length > 1 ? "s" : ""}.</p></div>`;
     }
 
     const list = data.rows.map((r, i) => ({ r, n: i + 1 })).filter(x => state.focus ? x.r.changed : true);
-    if (state.focus && data.stats.add + data.stats.del > 0) {
+    if (state.focus && data.stats.add + data.stats.del + (data.stats.moved || 0) > 0) {
       const hidden = data.rows.length - list.length;
       if (hidden > 0) {
         html += `<div class="nb-focusnote">Showing ${list.length} changed cell${list.length > 1 ? "s" : ""} · ${hidden} unchanged cell${hidden > 1 ? "s" : ""} hidden</div>`;
@@ -378,7 +497,9 @@
 
     html += `<div class="nb-cells">`;
     list.forEach(({ r, n }) => {
-      html += `<div class="nb-row${r.changed ? " has-change" : ""}" data-cell="${n}">` +
+      const moveCls = r.moved ? " nb-row-moved" : "";
+      const moveAttr = r.moveId ? ` data-moverow="${r.moveId}"` : "";
+      html += `<div class="nb-row${r.changed ? " has-change" : ""}${moveCls}" data-cell="${n}"${moveAttr}>` +
         `<div class="nb-cellcol">${r.aHtml}</div>` +
         `<div class="nb-cellnum">${n}</div>` +
         `<div class="nb-cellcol">${r.bHtml}</div>` +

@@ -20,7 +20,8 @@
     ["mark.dv-add", "add"], ["mark.dv-del", "del"],
     [".pdf-hl.add", "add"], [".pdf-hl.del", "del"], [".pdf-hl.mod", "mod"],
     [".nb-out-rich.dv-add", "add"], [".nb-out-rich.dv-del", "del"],
-    [".nb-row.has-change", "mod"]
+    [".nb-row.has-change", "mod"],
+    ['.gtr[data-type="move"]', "mod"]
   ];
   const COLORS = { add: "#1f883d", del: "#cf222e", mod: "#b5740a" };
   const W = 22;

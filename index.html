@@ -12,7 +12,7 @@
      Carlito≈Calibri, Tinos≈Times New Roman, Arimo≈Arial,
      Caladea≈Cambria, Cousine≈Courier New/Consolas, EB Garamond≈Garamond -->
 <link href="https://fonts.googleapis.com/css2?family=Arimo:ital,wght@0,400;0,700;1,400;1,700&family=Caladea:ital,wght@0,400;0,700;1,400;1,700&family=Carlito:ital,wght@0,400;0,700;1,400;1,700&family=Cousine:ital,wght@0,400;0,700;1,400;1,700&family=EB+Garamond:ital,wght@0,400;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=15">
+<link rel="stylesheet" href="styles.css?v=20">
 
 <!-- Parsing + diff libraries -->
 <script src="https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.min.js"></script>
@@ -38,7 +38,7 @@
   <!-- ===== Top bar ===== -->
   <header class="topbar">
     <div class="brand">
-<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <rect x="3" y="4" width="11" height="13" rx="2.5" fill="#ffeef0" stroke="#cf222e" stroke-width="1.5"/>
         <rect x="10" y="7" width="11" height="13" rx="2.5" fill="#e6ffec" stroke="#1f883d" stroke-width="1.5"/>
       </svg>
@@ -98,6 +98,10 @@
             <div class="fc-meta">
               <div class="fc-name"></div>
               <div class="fc-sub"></div>
+              <div class="fc-sheet" hidden>
+                <label class="fc-sheet-label">Sheet to compare</label>
+                <select class="sheet-dd fc-sheet-sel" title="Choose which sheet of this file to compare"></select>
+              </div>
             </div>
             <button class="btn ghost icon fc-remove" title="Remove">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -129,6 +133,10 @@
             <div class="fc-meta">
               <div class="fc-name"></div>
               <div class="fc-sub"></div>
+              <div class="fc-sheet" hidden>
+                <label class="fc-sheet-label">Sheet to compare</label>
+                <select class="sheet-dd fc-sheet-sel" title="Choose which sheet of this file to compare"></select>
+              </div>
             </div>
             <button class="btn ghost icon fc-remove" title="Remove">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -197,8 +205,14 @@
     <div class="tb-group hidden" id="sheetSel">
       <span class="tb-label">Sheets</span>
       <select class="sheet-dd" id="sheetA" title="Sheet from file A (original)"></select>
-      <span class="sheet-arrow" aria-hidden="true">→</span>
+      <button class="btn ghost icon sheet-swap" id="sheetSwapBtn" title="Swap left ↔ right">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 4L3 8l4 4"/><path d="M3 8h13"/><path d="M17 20l4-4-4-4"/><path d="M21 16H8"/></svg>
+      </button>
       <select class="sheet-dd" id="sheetB" title="Sheet from file B (changed)"></select>
+      <button class="btn primary sheet-apply" id="sheetApplyBtn" disabled title="Compare the selected sheets">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 4v16M15 4v16"/><path d="M4 9h5M15 9h5M4 15h5M15 15h5"/></svg>
+        Compare sheets
+      </button>
     </div>
 
     <div class="tb-sep"></div>
@@ -286,6 +300,13 @@
       <span class="st-mod hidden" id="statMod">~0</span>
     </div>
 
+    <div class="tb-group hidden" id="changesBtnGroup">
+      <button class="btn changes-btn" id="changesBtn" title="List every changed row and column">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+        Changes<span class="cb-count" id="changesCount">0</span>
+      </button>
+    </div>
+
     <div class="tb-sep"></div>
 
     <div class="tb-group">
@@ -302,6 +323,20 @@
   <!-- ===== Diff view ===== -->
   <main class="diffview hidden" id="diffview"></main>
 
+  <!-- ===== Changes panel (spreadsheet) ===== -->
+  <aside class="changes-panel" id="changesPanel" aria-hidden="true">
+    <div class="cp-head">
+      <div>
+        <div class="cp-title">Changes</div>
+        <div class="cp-sub" id="cpSub"></div>
+      </div>
+      <button class="cp-close" id="cpClose" title="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="cp-body" id="cpBody"></div>
+  </aside>
+
   <div class="loading" id="loading"><div class="spinner"></div><span>Parsing…</span></div>
 </div>
 
@@ -313,16 +348,16 @@
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/r.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/scala.min.js"></script>
 
-<script src="js/parsers.js?v=15"></script>
-<script src="js/ocr.js?v=15"></script>
-<script src="js/diff-engine.js?v=15"></script>
-<script src="js/grid-diff.js?v=15"></script>
-<script src="js/pdf-visual.js?v=15"></script>
-<script src="js/docx-visual.js?v=15"></script>
-<script src="js/notebook-visual.js?v=15"></script>
-<script src="js/render.js?v=15"></script>
-<script src="js/render-grid.js?v=15"></script>
-<script src="js/minimap.js?v=15"></script>
-<script src="js/app.js?v=15"></script>
+<script src="js/parsers.js?v=20"></script>
+<script src="js/ocr.js?v=20"></script>
+<script src="js/diff-engine.js?v=20"></script>
+<script src="js/grid-diff.js?v=20"></script>
+<script src="js/pdf-visual.js?v=20"></script>
+<script src="js/docx-visual.js?v=20"></script>
+<script src="js/notebook-visual.js?v=20"></script>
+<script src="js/render.js?v=20"></script>
+<script src="js/render-grid.js?v=20"></script>
+<script src="js/minimap.js?v=20"></script>
+<script src="js/app.js?v=20"></script>
 </body>
 </html>

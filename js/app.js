@@ -96,6 +96,7 @@
       if (!text.trim()) { slotEl.classList.remove("pasting"); return; }
       slot[side] = { name: side === "a" ? "Pasted (original)" : "Pasted (changed)", text: text.replace(/\r\n/g, "\n"), kind: "paste" };
       fillChip(side, slot[side], "Pasted text · " + text.split("\n").length + " lines");
+      populateSlotSheet(side, null);
       slotEl.classList.remove("pasting");
       slotEl.classList.add("filled");
       maybeAutoCompare();
@@ -104,6 +105,8 @@
     removeBtn.addEventListener("click", () => {
       slot[side] = null;
       slotEl.classList.remove("filled", "pasting");
+      populateSlotSheet(side, null);
+      maybeAutoCompare();
       clearErr();
     });
   }
@@ -111,6 +114,7 @@
   async function loadFileToSlot(side, file) {
     clearErr();
     const slotEl = $(`.slot[data-side="${side}"]`);
+    populateSlotSheet(side, null);            // clear any prior picker while parsing
     fillChip(side, { name: file.name }, "Parsing…", true);
     slotEl.classList.add("filled");
     try {
@@ -118,10 +122,12 @@
       slot[side] = parsed;
       const lines = parsed.text.split("\n").length;
       fillChip(side, parsed, `${P.kindLabel(parsed.kind)} · ${formatSize(file.size)} · ${lines} lines`);
+      populateSlotSheet(side, parsed);        // offer sheet choice for multi-sheet workbooks
       maybeAutoCompare();
     } catch (err) {
       slot[side] = null;
       slotEl.classList.remove("filled");
+      populateSlotSheet(side, null);
       showErr(err.message || "Could not read that file.");
     }
   }
@@ -161,6 +167,9 @@
     return kindGroup(kA) === kindGroup(kB);
   }
 
+  // Validate the two slots and toggle the Compare button. The comparison itself
+  // only runs when the user clicks Compare (see #compareBtn click handler) —
+  // it is intentionally NOT started automatically on upload.
   function maybeAutoCompare() {
     if (!slot.a || !slot.b) { $("#compareBtn").disabled = true; return; }
     if (!kindsCompatible(slot.a.kind, slot.b.kind)) {
@@ -173,7 +182,6 @@
     }
     clearErr();
     $("#compareBtn").disabled = false;
-    runCompare();
   }
 
   // ============ Run comparison ============
@@ -192,11 +200,14 @@
     state.tabular = !!(state.a.sheets && state.b.sheets);
     if (state.tabular) {
       state.gridMode = true;
-      // Default sheet pairing: A's first sheet, matched to B by name if possible.
       const aNames = state.a.sheets.map(s => s.name);
       const bNames = state.b.sheets.map(s => s.name);
-      state.sheetA = aNames[0] || null;
-      state.sheetB = bNames.indexOf(state.sheetA) !== -1 ? state.sheetA : (bNames[0] || null);
+      // Honor the sheet picked on the upload screen; otherwise default to A's
+      // first sheet, matched to B by name when possible.
+      const pickA = slotSheetValue("a"), pickB = slotSheetValue("b");
+      state.sheetA = (pickA && aNames.indexOf(pickA) !== -1) ? pickA : (aNames[0] || null);
+      state.sheetB = (pickB && bNames.indexOf(pickB) !== -1) ? pickB
+        : (bNames.indexOf(state.sheetA) !== -1 ? state.sheetA : (bNames[0] || null));
     }
     state.pdfVisual = !!(state.a.kind === "pdf" && state.b.kind === "pdf" && state.a.pdfPages && state.b.pdfPages);
     if (state.pdfVisual) state.pdfMode = "visual";
@@ -212,6 +223,7 @@
     toolbarEl.classList.remove("hidden");
     diffEl.classList.remove("hidden");
     $("#resetBtn").classList.remove("hidden");
+    $("#swapBtn").classList.remove("hidden");
   }
 
   function isGrid() { return state.tabular && state.gridMode; }
@@ -235,6 +247,37 @@
     };
     fill(selA, state.a.sheets, state.sheetA);
     fill(selB, state.b.sheets, state.sheetB);
+    // Selectors now reflect the active comparison, so nothing is staged.
+    const applyBtn = $("#sheetApplyBtn");
+    if (applyBtn) applyBtn.disabled = true;
+  }
+
+  // ---- Upload-screen per-file sheet pickers (choose sheets before comparing) ----
+  // Populate (or hide) the sheet dropdown inside a slot's filechip. Only shown
+  // when the parsed file is a workbook with more than one sheet.
+  function populateSlotSheet(side, parsed) {
+    const wrap = $(`.slot[data-side="${side}"] .fc-sheet`);
+    const sel = $(`.slot[data-side="${side}"] .fc-sheet-sel`);
+    if (!wrap || !sel) return;
+    const sheets = parsed && parsed.sheets;
+    if (!sheets || sheets.length < 2) { wrap.hidden = true; sel.innerHTML = ""; return; }
+    sel.innerHTML = "";
+    sheets.forEach((s, i) => {
+      const o = document.createElement("option");
+      const nrows = Array.isArray(s.grid) ? s.grid.length : 0;
+      o.value = s.name;
+      o.textContent = nrows ? `${s.name} · ${nrows} row${nrows === 1 ? "" : "s"}` : s.name;
+      if (i === 0) o.selected = true;
+      sel.appendChild(o);
+    });
+    wrap.hidden = false;
+  }
+  // The sheet chosen on the upload screen for a side, or null if no picker shown.
+  function slotSheetValue(side) {
+    const wrap = $(`.slot[data-side="${side}"] .fc-sheet`);
+    const sel = $(`.slot[data-side="${side}"] .fc-sheet-sel`);
+    if (!wrap || wrap.hidden || !sel || !sel.value) return null;
+    return sel.value;
   }
   function isVisualPdf() { return state.pdfVisual && state.pdfMode === "visual"; }
   function isVisualDoc() { return state.docVisual && state.docMode === "visual"; }
@@ -415,6 +458,7 @@
     }
     if (isGrid()) {
       GR.render(diffEl, state);
+      syncGridScroll();
     } else {
       R.render(diffEl, {
         rows: state.rows,
@@ -456,6 +500,8 @@
     $("#highlightGroup").classList.toggle("hidden", grid || visual);
     $("#searchGroup").classList.toggle("hidden", visual);
     $("#statMod").classList.toggle("hidden", !grid);
+    $("#changesBtnGroup").classList.toggle("hidden", !grid);
+    if (!grid) closeChangesPanel();
     if (state.tabular) {
       document.querySelectorAll("[data-tab]").forEach(b =>
         b.classList.toggle("active", b.dataset.tab === (state.gridMode ? "grid" : "text")));
@@ -496,6 +542,9 @@
   }
 
   function updateStats() {
+    // Default: hide the third (modified / moved) pill; branches that use it
+    // re-show it below. Prevents a stale "⇅N" lingering across file switches.
+    { const _m = $("#statMod"); if (_m) _m.classList.add("hidden"); }
     if (isVisualPdf()) {
       const s = state.pdfData ? state.pdfData.stats : { add: 0, del: 0, mod: 0 };
       $("#statAdd").textContent = "+" + s.add;
@@ -514,9 +563,15 @@
       return;
     }
     if (isVisualNb()) {
-      const s = state.nbData ? state.nbData.stats : { add: 0, del: 0 };
+      const s = state.nbData ? state.nbData.stats : { add: 0, del: 0, moved: 0 };
       $("#statAdd").textContent = "+" + s.add;
       $("#statDel").textContent = "−" + s.del;
+      const modEl = $("#statMod");
+      if (modEl) {
+        modEl.textContent = "⇅" + (s.moved || 0);
+        modEl.title = "moved cells";
+        modEl.classList.toggle("hidden", !s.moved);
+      }
       return;
     }
     if (isGrid()) {
@@ -524,11 +579,122 @@
       $("#statAdd").textContent = "+" + s.addCells;
       $("#statDel").textContent = "−" + s.delCells;
       $("#statMod").textContent = "~" + s.modCells;
+      updateChangesButton();
     } else {
       const st = E.stats(state.rows);
       $("#statAdd").textContent = "+" + st.add;
       $("#statDel").textContent = "−" + st.del;
     }
+  }
+
+  // ============ Changes panel (spreadsheets) ============
+  function gridChangeRowCount() {
+    if (!state.gridData) return 0;
+    let n = 0;
+    state.gridData.sheets.forEach(sh => sh.rows.forEach(r => { if (r.type !== "eq") n++; }));
+    return n;
+  }
+  function updateChangesButton() {
+    const el = $("#changesCount");
+    if (!el) return;
+    const s = state.gridData ? state.gridData.stats : null;
+    const colChanges = s ? (s.addedCols + s.removedCols + s.movedCols) : 0;
+    el.textContent = gridChangeRowCount() + colChanges;
+  }
+  function closeChangesPanel() {
+    const p = $("#changesPanel");
+    if (p) { p.classList.remove("open"); p.setAttribute("aria-hidden", "true"); }
+  }
+  function openChangesPanel() {
+    const p = $("#changesPanel");
+    if (!p) return;
+    populateChangesPanel();
+    p.classList.add("open"); p.setAttribute("aria-hidden", "false");
+  }
+  function toggleChangesPanel() {
+    const p = $("#changesPanel");
+    if (p && p.classList.contains("open")) closeChangesPanel(); else openChangesPanel();
+  }
+  function colLabelFor(sh, c) {
+    const letter = c.bIdx != null ? GD.colName(c.bIdx) : GD.colName(c.aIdx);
+    return sh.useHeaders && c.name ? c.name : letter;
+  }
+  function populateChangesPanel() {
+    const body = $("#cpBody"), sub = $("#cpSub");
+    if (!body || !state.gridData) return;
+    const gd = state.gridData, multi = gd.sheets.length > 1;
+    let html = "", totalRows = 0;
+    gd.sheets.forEach((sh, si) => {
+      const colItems = [], rowItems = [];
+      sh.columns.forEach(c => {
+        if (c.status === "same") return;
+        const label = esc(colLabelFor(sh, c));
+        if (c.status === "added") colItems.push(`<div class="cp-item cp-coli"><span class="cp-pill add">col +</span><span class="cp-rowno">${label}</span></div>`);
+        else if (c.status === "removed") colItems.push(`<div class="cp-item cp-coli"><span class="cp-pill del">col −</span><span class="cp-rowno">${label}</span></div>`);
+        else colItems.push(`<div class="cp-item cp-coli"><span class="cp-pill move">col ⇄</span><span class="cp-rowno">${label}</span><span class="cp-cols">${GD.colName(c.aIdx)}→${GD.colName(c.bIdx)}</span></div>`);
+      });
+      sh.rows.forEach((r, ri) => {
+        if (r.type === "eq") return;
+        totalRows++;
+        const pill = r.type === "add" ? "add" : r.type === "del" ? "del" : r.type === "move" ? "move" : "mod";
+        const tag = r.type === "add" ? "added" : r.type === "del" ? "removed" : r.type === "move" ? "moved" : "edited";
+        const no = r.type === "del" ? r.left.no : r.right.no;
+        let colsTxt = "";
+        if (r.changed && r.changed.length) colsTxt = r.changed.map(ci => colLabelFor(sh, sh.columns[ci])).join(", ");
+        if (r.type === "move") colsTxt = `row ${r.left ? r.left.no : "?"} → ${no}` + (colsTxt ? " · " + colsTxt : "");
+        rowItems.push(`<div class="cp-item" data-rk="${si}-${ri}"><span class="cp-pill ${pill}">${tag}</span><span class="cp-rowno">Row ${no}</span><span class="cp-cols">${esc(colsTxt)}</span></div>`);
+      });
+      if (multi && (colItems.length || rowItems.length)) html += `<div class="cp-section">${esc(sh.name)}</div>`;
+      if (colItems.length) html += `<div class="cp-section">Columns</div>` + colItems.join("");
+      if (rowItems.length) html += `<div class="cp-section">Rows</div>` + rowItems.join("");
+    });
+    body.innerHTML = html || `<div class="cp-empty">No changes.</div>`;
+    if (sub) {
+      const s = gd.stats;
+      const bits = [];
+      if (totalRows) bits.push(totalRows + " row" + (totalRows === 1 ? "" : "s"));
+      const cc = s.addedCols + s.removedCols + s.movedCols;
+      if (cc) bits.push(cc + " column" + (cc === 1 ? "" : "s"));
+      sub.textContent = bits.join(" · ") || "no changes";
+    }
+  }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  /* Keep the two side-by-side grid panes scrolling together (both axes), so
+     aligned rows/columns stay lined up while panning a wide sheet. */
+  function syncGridScroll() {
+    diffEl.querySelectorAll(".gridpair").forEach(pair => {
+      const sides = pair.querySelectorAll(".gridside");
+      if (sides.length !== 2) return;
+      const [l, r] = sides;
+      let lock = false;
+      const mirror = (from, to) => {
+        if (lock) return;
+        lock = true;
+        to.scrollTop = from.scrollTop;
+        to.scrollLeft = from.scrollLeft;
+        lock = false;
+      };
+      l.addEventListener("scroll", () => mirror(l, r));
+      r.addEventListener("scroll", () => mirror(r, l));
+    });
+  }
+
+  function jumpToGridRow(rk) {
+    const v = (window.CSS && CSS.escape) ? CSS.escape(rk) : rk;
+    let trs;
+    try { trs = diffEl.querySelectorAll(`.gtr[data-rk="${v}"]`); } catch (_) { return; }
+    if (!trs.length) return;
+    const first = trs[0];
+    // scroll within the row's own scroll box (.gridside / .grid-scroll) when it
+    // is capped-height, else fall back to the page scroller.
+    const box = first.closest(".gridside, .grid-scroll");
+    if (box && box.scrollHeight > box.clientHeight + 4) {
+      const bRect = box.getBoundingClientRect(), rRect = first.getBoundingClientRect();
+      box.scrollTop += (rRect.top - bRect.top) - box.clientHeight / 3;
+    }
+    const cRect = diffEl.getBoundingClientRect(), rRect2 = first.getBoundingClientRect();
+    diffEl.scrollTop += (rRect2.top - cRect.top) - diffEl.clientHeight / 3;
+    trs.forEach(tr => { tr.classList.remove("flash"); void tr.offsetWidth; tr.classList.add("flash"); });
   }
 
   // ============ Change navigation ============
@@ -620,6 +786,13 @@
   }
 
   function scrollToEl(el) {
+    // If the element lives inside a capped-height grid scroll box, scroll that
+    // box first so the row is actually revealed.
+    const box = el.closest(".gridside, .grid-scroll");
+    if (box && box.scrollHeight > box.clientHeight + 4) {
+      const bRect = box.getBoundingClientRect(), eR = el.getBoundingClientRect();
+      box.scrollTop += (eR.top - bRect.top) - box.clientHeight / 3;
+    }
     const cRect = diffEl.getBoundingClientRect();
     const eRect = el.getBoundingClientRect();
     const top = diffEl.scrollTop + (eRect.top - cRect.top) - 90;
@@ -685,6 +858,20 @@
   }
 
   // ============ Reset ============
+  // Swap the two sides (A ↔ B), including the chosen sheets, then re-diff.
+  function swapSides() {
+    const tmp = state.a; state.a = state.b; state.b = tmp;
+    slot.a = state.a; slot.b = state.b;
+    const ts = state.sheetA; state.sheetA = state.sheetB; state.sheetB = ts;
+    state.currentHunk = -1;
+    state.pdfData = null;
+    state.docData = null;
+    state.nbData = null;
+    state.gridData = null;
+    rebuildDiff();
+    toast("Swapped sides");
+  }
+
   function reset() {
     slot.a = null; slot.b = null;
     state.a = null; state.b = null;
@@ -701,6 +888,8 @@
     document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === "split"));
     document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab === "grid"));
     document.querySelectorAll(".slot").forEach(s => s.classList.remove("filled", "pasting"));
+    document.querySelectorAll(".fc-sheet").forEach(w => { w.hidden = true; });
+    document.querySelectorAll(".fc-sheet-sel").forEach(s => { s.innerHTML = ""; });
     document.querySelectorAll(".pastebox textarea").forEach(t => t.value = "");
     uploadEl.classList.remove("hidden");
     toolbarEl.classList.add("hidden");
@@ -708,7 +897,9 @@
     diffEl.innerHTML = "";
     if (window.DiffMinimap) DiffMinimap.refresh();
     $("#resetBtn").classList.add("hidden");
+    $("#swapBtn").classList.add("hidden");
     $("#compareBtn").disabled = true;
+    closeChangesPanel();
     clearErr();
   }
 
@@ -732,13 +923,32 @@
         renderAll();
       });
     });
-    // sheet pickers (multi-sheet spreadsheets) — choose which sheet of each file to compare
-    const sheetSelA = $("#sheetA"), sheetSelB = $("#sheetB");
-    if (sheetSelA) sheetSelA.addEventListener("change", () => {
-      state.sheetA = sheetSelA.value; state.currentHunk = -1; rebuildDiff();
+    // sheet pickers (multi-sheet spreadsheets) — choose which sheet of each file
+    // to compare. Changing a dropdown only STAGES the choice; the diff re-runs
+    // when the user clicks "Compare sheets".
+    const sheetSelA = $("#sheetA"), sheetSelB = $("#sheetB"), sheetApplyBtn = $("#sheetApplyBtn");
+    const syncSheetApply = () => {
+      if (!sheetApplyBtn) return;
+      const changed = (sheetSelA && sheetSelA.value !== state.sheetA) ||
+                      (sheetSelB && sheetSelB.value !== state.sheetB);
+      sheetApplyBtn.disabled = !changed;
+    };
+    if (sheetSelA) sheetSelA.addEventListener("change", syncSheetApply);
+    if (sheetSelB) sheetSelB.addEventListener("change", syncSheetApply);
+    if (sheetApplyBtn) sheetApplyBtn.addEventListener("click", () => {
+      if (sheetSelA) state.sheetA = sheetSelA.value;
+      if (sheetSelB) state.sheetB = sheetSelB.value;
+      state.currentHunk = -1;
+      sheetApplyBtn.disabled = true;
+      rebuildDiff();
     });
-    if (sheetSelB) sheetSelB.addEventListener("change", () => {
-      state.sheetB = sheetSelB.value; state.currentHunk = -1; rebuildDiff();
+    // Changes panel (spreadsheets)
+    const changesBtn = $("#changesBtn"), cpClose = $("#cpClose"), cpBody = $("#cpBody");
+    if (changesBtn) changesBtn.addEventListener("click", toggleChangesPanel);
+    if (cpClose) cpClose.addEventListener("click", closeChangesPanel);
+    if (cpBody) cpBody.addEventListener("click", (e) => {
+      const item = e.target.closest(".cp-item[data-rk]");
+      if (item) jumpToGridRow(item.getAttribute("data-rk"));
     });
     // grid / text segmented (spreadsheets only)
     document.querySelectorAll("[data-tab]").forEach(b => {
@@ -861,16 +1071,9 @@
     $("#exportBtn").addEventListener("click", exportDiff);
     // reset / swap
     $("#resetBtn").addEventListener("click", reset);
-    $("#swapBtn").addEventListener("click", () => {
-      const tmp = state.a; state.a = state.b; state.b = tmp;
-      slot.a = state.a; slot.b = state.b;
-      state.currentHunk = -1;
-      state.pdfData = null;
-      state.docData = null;
-      state.nbData = null;
-      rebuildDiff();
-      toast("Swapped sides");
-    });
+    $("#swapBtn").addEventListener("click", swapSides);
+    const sheetSwapBtn = $("#sheetSwapBtn");
+    if (sheetSwapBtn) sheetSwapBtn.addEventListener("click", swapSides);
 
     // keyboard shortcuts
     document.addEventListener("keydown", e => {
